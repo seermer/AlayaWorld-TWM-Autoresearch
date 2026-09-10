@@ -584,6 +584,9 @@ class LoraConfig:
 @dataclass
 class OptimizerConfig:
     batch_size: int = 1
+    # Micro-batches per optimizer step. 1 reproduces the pre-accumulation behaviour
+    # exactly, including the order of operations.
+    grad_accum_steps: int = 1
     lr: float = 5e-5
     weight_decay: float = 0.001
     epochs: int = 500

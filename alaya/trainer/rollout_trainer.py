@@ -48,6 +48,7 @@ from alaya.memory.spatial_cache import (
 )
 from alaya.model import build_model_components
 from alaya.model.fsdp import maybe_wrap_fsdp
+from alaya.trainer.grad_accum import accum_flags
 from alaya.utils.distributed import broadcast_tensor, init_distributed, rank0_print
 from alaya.utils.dtype import resolve_dtype
 from alaya.utils.seed import seed_everything
@@ -92,6 +93,7 @@ class RolloutTrainer:
         self.components = None
         self.history_encoder = None
         self.optimizer = None
+        self._micro_step = 0
         self.scheduler = None
         self.dataloader = None
         self.error_bank = None
@@ -345,7 +347,18 @@ class RolloutTrainer:
 
             for batch in self.dataloader:
                 step_start = time.time()
-                loss, grad_norm, info = self.train_one_step(batch)
+                accum_first, accum_last, loss_scale = accum_flags(
+                    self._micro_step, int(self.cfg.optimizer.grad_accum_steps)
+                )
+                self._micro_step += 1
+                loss, grad_norm, info = self.train_one_step(
+                    batch,
+                    accum_first=accum_first,
+                    accum_last=accum_last,
+                    loss_scale=loss_scale,
+                )
+                if not accum_last:
+                    continue
                 self.global_step += 1
 
                 if self.dist.is_main and self.global_step % self.cfg.optimizer.log_steps == 0:
@@ -450,17 +463,30 @@ class RolloutTrainer:
                 if self.cfg.optimizer.max_steps is not None and self.global_step >= self.cfg.optimizer.max_steps:
                     return
 
-    def train_one_step(self, batch: Any) -> tuple[float, float, dict[str, Any]]:
+    def train_one_step(
+        self,
+        batch: Any,
+        *,
+        accum_first: bool = True,
+        accum_last: bool = True,
+        loss_scale: float = 1.0,
+    ) -> tuple[float, float, dict[str, Any]]:
         assert self.components is not None
         assert self.optimizer is not None
 
         if self.cfg.layout.condition.type == "inline":
+            if not (accum_first and accum_last and loss_scale == 1.0):
+                raise NotImplementedError(
+                    "optimizer.grad_accum_steps > 1 is not supported for "
+                    "layout.condition.type='inline'"
+                )
             return self._train_one_step_inline(batch)
 
         self.components.transformer.train()
         if self.history_encoder is not None:
             self.history_encoder.train(self.cfg.memory.train)
-        self.optimizer.zero_grad(set_to_none=True)
+        if accum_first:
+            self.optimizer.zero_grad(set_to_none=True)
 
         video_pixels, caption, metadata = self._unpack_batch(batch)
         prompt_caption = self._caption_with_prefix(caption, metadata)
@@ -899,7 +925,7 @@ class RolloutTrainer:
             if _nf_ws > 0:
                 _nf_w = _nf_w * min(1.0, float(self.global_step) / float(_nf_ws))
             loss = loss + _nf_w * mcp_loss
-        loss.backward()
+        (loss * loss_scale).backward() if loss_scale != 1.0 else loss.backward()
         if self.dist.is_main and (self.global_step % 100 == 0) and spatial_latent is not None:
             print(
                 f"[SpatialMaskDbg] step={self.global_step} "
@@ -942,26 +968,33 @@ class RolloutTrainer:
                     flush=True,
                 )
 
-        self._sync_grads_outside_fsdp()   # all-reduce params outside the FSDP tree (HistoryEncoder / LoRA)
-        trainable = []
-        if self.history_encoder is not None:
-            trainable += [p for p in self.history_encoder.parameters() if p.requires_grad]
-        trainable += [p for p in self.components.transformer.parameters() if p.requires_grad]
-        if self.components.lora_manager is not None:
-            trainable += self.components.lora_manager.get_trainable_parameters()
-        if self.components.next_forcing_head is not None:
-            nf_params = self.components.next_forcing_head.trainable_parameters()
-            trainable += nf_params
-            self._allreduce_grads(nf_params)
-        grad_norm = torch.nn.utils.clip_grad_norm_(trainable, self.cfg.optimizer.max_grad_norm)
+        if accum_last:
+            self._sync_grads_outside_fsdp()   # all-reduce params outside the FSDP tree (HistoryEncoder / LoRA)
+            trainable = []
+            if self.history_encoder is not None:
+                trainable += [p for p in self.history_encoder.parameters() if p.requires_grad]
+            trainable += [p for p in self.components.transformer.parameters() if p.requires_grad]
+            if self.components.lora_manager is not None:
+                trainable += self.components.lora_manager.get_trainable_parameters()
+            if self.components.next_forcing_head is not None:
+                nf_params = self.components.next_forcing_head.trainable_parameters()
+                trainable += nf_params
+                self._allreduce_grads(nf_params)
+            grad_norm = torch.nn.utils.clip_grad_norm_(trainable, self.cfg.optimizer.max_grad_norm)
 
-        self.optimizer.step()
-        if self.scheduler is not None:
-            self.scheduler.step()
+            self.optimizer.step()
+            if self.scheduler is not None:
+                self.scheduler.step()
+            grad_norm_value = float(grad_norm.item())
+        else:
+            # Mid-window: gradients keep accumulating. The all-reduce must not run
+            # here -- it does all_reduce(SUM) then div_(world_size), so a second
+            # call on the same gradients would divide them twice.
+            grad_norm_value = float("nan")
 
         self._push_error_bank(target_noisy, sigma_view, pred_velocity, target_clean, float(sigma.item()))
 
-        return float(loss.item()), float(grad_norm.item()), {
+        return float(loss.item()), grad_norm_value, {
             "K": K,
             "gap_steps": gap_steps,
             "cond_mode": cond_mode,
