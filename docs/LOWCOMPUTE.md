@@ -138,7 +138,7 @@ The launcher only sets environment; all training logic stays in `scripts/finetun
 |---|---|---|---|
 | `training.mode` | `sft` | **`lora`** | section 1 |
 | `paths.resume_checkpoint` | stage2a merged | **`weights/alaya-world-ar`** | start from the released stage2b |
-| `lora` | disabled | **r=64, alpha=64**, 480 targeted Linears | attn1/attn2/ff across 48 blocks |
+| `lora` | disabled | **r=64, alpha=64**, 480 targeted Linears (**327M params**, 654MB bf16) | attn1/attn2/ff across 48 blocks |
 | `next_forcing` | on | **off** | ~670M replicated params; also halves the target token count |
 | `memory.train` | true | true (kept) | the HistoryEncoder is 34MB and is the load-bearing memory branch |
 | `anti_drift` | on | on (kept) | the error bank is CPU-resident bf16, effectively free |
@@ -215,6 +215,13 @@ mechanism by which this work leaves inference and WBench alone**, rather than a 
 
 An unmatched LoRA key is now fatal rather than a warning: a silently skipped adapter produces
 a checkpoint that loads cleanly and generates subtly wrong video.
+
+### Disk
+
+A checkpoint is ~690MB (`lora.safetensors` 654MB + `history_encoder.pt` 34MB); no
+`transformer.pt` is written in `lora` mode. The **merge** in section 6 writes a full 26GB
+`transformer.pt`, so free that much before running it -- prune intermediate checkpoints if
+needed.
 
 ## 7. Limitations
 
