@@ -205,6 +205,26 @@ def convert(clip_id: str, meta: dict, staging: Path, ann_root: Path) -> dict | N
     }
 
 
+def invalidate_sample_cache(source: str) -> list[Path]:
+    """Drop MultiSourceVideoDataset's cached sample list for this source.
+
+    That cache is keyed on the source name, the jsonl FILENAME and the pose subdir
+    (t2v_datasets.py:501-514) -- not on the jsonl's contents, size or mtime. Re-running
+    this importer with a different --num-clips therefore rewrites the same jsonl path
+    and the stale pickle is silently reused, so training would run on the previous
+    clip count while every log line looks healthy. Deleting it here keeps the
+    invalidation next to the write that causes it.
+    """
+    cache_dir = Path(os.environ.get("ALAYA_DATASET_CACHE_DIR", ".cache/dataset"))
+    if not cache_dir.is_dir():
+        return []
+    removed = []
+    for stale in cache_dir.glob(f"multi_source_*{source}*.pkl"):
+        stale.unlink()
+        removed.append(stale)
+    return removed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -239,6 +259,9 @@ def main() -> None:
     with jsonl.open("w", encoding="utf-8") as handle:
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    for stale in invalidate_sample_cache(ann_root.name):
+        print(f"[prepare] dropped stale sample cache {stale}", flush=True)
 
     if not args.keep_staging:
         for path in sorted(staging.rglob("*"), reverse=True):
