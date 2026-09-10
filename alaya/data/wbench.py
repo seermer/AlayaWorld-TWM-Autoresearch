@@ -43,7 +43,13 @@ def _short_subject(case: dict) -> str:
     for pre in ("The main subject is ", "the main subject is "):
         if desc.startswith(pre):
             desc = desc[len(pre):]
-    desc = desc.lstrip("aA ").strip()
+    # NB: not desc.lstrip("aA "), which strips a *character set* -- it turns
+    # "an elf ..." into "n elf ..." and "apple picker" into "pple picker".
+    lowered = desc.lower()
+    for article in ("the ", "an ", "a "):
+        if lowered.startswith(article):
+            desc = desc[len(article):]
+            break
     words = desc.split()
     return " ".join(words[:5]).rstrip(",.;") or "subject"
 
@@ -76,7 +82,13 @@ def _strip_camera(text: str) -> str:
 
 
 class WBenchNaviDataset(Dataset):
-    """WBench navigation split for generation-only validation.
+    """WBench cases for generation-only validation.
+
+    include_non_navigation=False keeps the historical behaviour (the 158-case navi
+    split). include_non_navigation=True keeps every case in data/cases (the 289-case
+    full split), which is what a text-driven model such as AlayaWorld is evaluated on:
+    the per-turn prompt schedule already carries event_edit / subject_action /
+    perspective_switch, so those turns are driven by text with a held camera.
 
     Three mutually exclusive sources for the first frame:
       1) native: use settings.initial_image from cases/*.json; each case carries its own poses
@@ -103,11 +115,13 @@ class WBenchNaviDataset(Dataset):
         sekai_caption_base: str | None = None,
         sekai_random_n: int = 0,
         sekai_seed: int = 42,
+        include_non_navigation: bool = False,
     ) -> None:
         self.root = Path(root)
         self.width = int(width)
         self.height = int(height)
         self.frames = int(frames)
+        self.include_non_navigation = bool(include_non_navigation)
         self._to_tensor = transforms.ToTensor()
         self._rewritten = _load_rewritten_prompts(self.root)
 
@@ -208,10 +222,25 @@ class WBenchNaviDataset(Dataset):
                     continue
                 with path.open("r", encoding="utf-8") as f:
                     data = json.load(f)
-                if _is_navigation_case(data):
+                if self.include_non_navigation or _is_navigation_case(data):
                     self.entries.append({"kind": "case", "case_id": case_id, "case_path": str(path), "case": data})
+            if wanted is not None:
+                # A requested case that the navigation filter drops would otherwise
+                # vanish silently and the run would report success having rendered a
+                # subset (131 of the 289 cases carry no navigation turn).
+                on_disk = {p.stem.replace("case_", "") for p in cases_dir.glob("case_*.json")}
+                missing = sorted(wanted - on_disk)
+                if missing:
+                    raise ValueError(f"case ids not found under {cases_dir}: {missing[:10]}")
+                filtered = sorted(wanted - {e["case_id"] for e in self.entries})
+                if filtered:
+                    raise ValueError(
+                        f"{len(filtered)} requested case(s) have no navigation turn and were "
+                        f"dropped: {filtered[:10]}{'...' if len(filtered) > 10 else ''}. Set "
+                        "dataset.include_non_navigation=true to evaluate the full split."
+                    )
             if not self.entries:
-                raise ValueError(f"no WBench navigation cases found under {cases_dir}")
+                raise ValueError(f"no WBench cases found under {cases_dir}")
             self.turn_counts = [_navigation_turn_count(e["case"]) for e in self.entries]
             self.full_turn_counts = [max(1, _max_turn(e["case"])) for e in self.entries]
 
@@ -451,6 +480,12 @@ def _full_turn_actions(case: dict[str, Any], default: str = "W") -> list[str]:
        - interaction turn -> reuse the previous navigation action so the camera keeps moving while
          the prompt schedule drives the content change.
        For pure navigation cases the result matches the plain navigation actions.
+
+       On the full split this also covers cases that never navigate, where every turn
+       takes `default`. Keeping that at "W" is deliberate: no WBench metric grades the
+       camera trajectory on those cases (navigation_trajectory is scored on 0 of the
+       131), while dynamic_degree is scored on all of them, and a held camera renders
+       them nearly static.
     """
     its = case.get("interactions", []) or []
     nav = {
@@ -525,6 +560,82 @@ def _load_rewritten_prompts(root: Path) -> dict[str, dict[str, str]]:
     return out
 
 
+# --- perspective_switch -------------------------------------------------------
+# WBench encodes a perspective switch as a code ("fp_to_tp", "scope_to_fp", or
+# "tp_to_tp: switch to follow the helicopter ..."). Two things have to happen for a
+# text-driven model to serve those turns:
+#   * the codes have to become prose, and
+#   * the prose has to go into the scene narrative, not the <camera> block, because
+#     _strip_camera() deletes that block wholesale (the vigeo path drives the camera
+#     from poses, so camera prose never reaches the model).
+# The wording mirrors src/metrics/interaction/vlm_interaction.py in WBench, which is
+# what perspective_switch_adherence grades the result against.
+_PS_SHORT = {"fp": "first-person", "tp": "third-person", "scope": "scoped/magnified"}
+# Copied verbatim from PERSPECTIVE_TYPE_DESC in WBench's
+# src/metrics/interaction/vlm_interaction.py. perspective_switch_adherence shows the
+# judge these exact strings ("Definition: {after_desc}"), so stating the target in the
+# benchmark's own words is what the turn is graded against.
+_PS_DESC = {
+    "fp": (
+        "first-person — camera through the character's eyes, looking "
+        "outward at the world; no part of the character's own body is "
+        "visible except possibly hands or a held weapon/tool"
+    ),
+    "tp": (
+        "third-person — an external camera showing a character's body "
+        "(back, side, or full figure) from behind, above, or at an angle"
+    ),
+    "scope": (
+        "scoped / ADS — a magnified view through a weapon scope, "
+        "binoculars, or similar optic, typically with a circular "
+        "vignette, crosshair, reticle, or other scope overlay"
+    ),
+}
+
+
+def _parse_ps_action(action: str) -> tuple[str, str, str]:
+    """(before, after, free-text detail) — same parse WBench's metric uses."""
+    raw = str(action).strip()
+    detail = raw.split(":", 1)[1].strip() if ":" in raw else ""
+    code = raw.split(":", 1)[0].strip().lower()
+    for before, after in (
+        ("fp", "tp"), ("tp", "fp"), ("tp", "tp"), ("fp", "fp"), ("fp", "scope"), ("scope", "fp"),
+    ):
+        if f"{before}_to_{after}" in code:
+            return before, after, detail
+    parts = code.split("_to_")
+    if len(parts) == 2:
+        return parts[0].strip(), parts[1].strip(), detail
+    return "fp", "tp", detail
+
+
+def _perspective_switch_clauses(action: str) -> tuple[str, str]:
+    """(clause for the switching turn, clause that holds the new view on later turns)."""
+    raw = str(action).strip()
+    if "_to_" not in raw.split(":", 1)[0].lower():
+        # Not a WBench code -- a prompts_training_style.jsonl rewrite may already supply
+        # prose. _parse_ps_action would fall back to ("fp", "tp") and invent a switch
+        # direction, so use the text as written instead.
+        clause = raw if raw.endswith((".", "!", "?")) else f"{raw}."
+        return clause, clause
+    before, after, detail = _parse_ps_action(action)
+    after_short = _PS_SHORT.get(after, after)
+    if before == after:
+        # fp_to_fp / tp_to_tp: the perspective type is unchanged, so the free-text half
+        # of the action is the whole instruction.
+        switch = f"The camera cuts to a different {after_short} viewpoint"
+        switch += f": {detail}." if detail else "."
+        hold = f"The camera stays on that {after_short} viewpoint"
+        hold += f": {detail}." if detail else "."
+        return switch, hold
+    before_short = _PS_SHORT.get(before, before)
+    after_desc = _PS_DESC.get(after, after_short)
+    switch = f"The view switches from {before_short} to {after_desc}."
+    if detail:
+        switch = switch[:-1] + f" — {detail}."
+    return switch, f"The view remains {after_desc}."
+
+
 def _build_training_style_caption(
     case: dict[str, Any], *, rewritten: dict[str, str] | None = None,
     scene_extra: str = "", camera_extra: str = "",
@@ -564,8 +675,14 @@ def _build_interaction_prompt_schedule(
     inter_rw = (rewritten or {}).get("interactions") or {}
     scene_acc: list[str] = []
     camera_acc: list[str] = []
+    # A perspective switch is a state, not an accumulating event: only the latest one
+    # applies, so it lives in its own slot instead of being appended to scene_acc
+    # (turn 2 of an fp_to_tp / tp_to_fp pair would otherwise contradict turn 1).
+    perspective_clause = ""
+    perspective_hold = ""
     sched: list[str] = []
     for t in range(1, int(max_turn) + 1):
+        switched_this_turn = False
         for it in its:
             if int(it.get("turn", 0) or 0) != t:
                 continue
@@ -577,10 +694,15 @@ def _build_interaction_prompt_schedule(
                 scene_acc.append(act)
             elif typ == "perspective_switch":
                 camera_acc.append(act)
+                perspective_clause, perspective_hold = _perspective_switch_clauses(act)
+                switched_this_turn = True
+        if perspective_hold and not switched_this_turn:
+            perspective_clause = perspective_hold
+        scene_extra = " ".join(p for p in [*scene_acc, perspective_clause] if p)
         sched.append(
             _build_training_style_caption(
                 case, rewritten=rewritten,
-                scene_extra=" ".join(scene_acc), camera_extra=" ".join(camera_acc),
+                scene_extra=scene_extra, camera_extra=" ".join(camera_acc),
             )
         )
     return sched

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -218,6 +219,12 @@ class RolloutTrainer:
                 checkpoint_path=self.cfg.paths.history_encoder,
             )
             if self.cfg.memory.use_lr_branch:
+                # Snapshots transformer.patchify_proj into non-persistent lr_proj_* buffers
+                # (they are absent from history_encoder.pt, so a clean missing=0 says
+                # nothing about them). It must run after the base weights are loaded and
+                # before FSDP shards the transformer -- this window is that place. Loading
+                # the base lazily, or moving this call, silently fills the memory branch
+                # with whatever patchify_proj happened to hold.
                 self.history_encoder.setup_lr_proj_from_patchify(patchify_proj)
         else:
             self.history_encoder = None
@@ -302,6 +309,11 @@ class RolloutTrainer:
             lr_lambda=lambda step: min(1.0, float(step + 1) / max(1, self.cfg.optimizer.warmup_steps)),
             last_epoch=scheduler_start,
         )
+        if os.environ.get("ALAYA_SKIP_TRAIN_DATALOADER", "0") == "1":
+            # --validate-only: the inference paths never touch the training corpus, so
+            # do not require data.sources to be present on disk just to render videos.
+            rank0_print(self.dist, "[Data]", "train dataloader skipped (validate-only)")
+            return
         self.dataloader = build_train_dataloader(self.cfg, self.dist)
         self.error_bank = self._build_error_bank()
         if getattr(self.cfg.runtime, "precache_text_embeds", False) and self.cfg.runtime.text_embed_cache_dir:
@@ -1331,6 +1343,7 @@ class RolloutTrainer:
                     N=N,
                     gap_steps=gap_steps,
                     cond_end=cond_end,
+                    noise_generator=self._validation_noise_generator(metadata, _vi),
                 )
                 _vtag = "" if _n_variants <= 1 else f"_var{_vi:02d}"
                 stem = f"rank-{self.dist.rank:03d}_global-{global_idx:06d}_sample-{sample_idx:06d}{_vtag}"
@@ -1421,21 +1434,11 @@ class RolloutTrainer:
                 )
                 self._update_validation_metric_history(mode_name, payload)
                 if self.cfg.validation.save_videos:
-                    self._save_validation_videos(
-                        mode_dir=mode_dir,
-                        stem=stem,
-                        latent_full=latent_full,
-                        pred_latents=pred_latents,
-                        nearby_condition_latents=nearby_condition_latents,
-                        metadata=metadata,
-                        K=K,
-                        N=N,
-                        gap_steps=gap_steps,
-                        cond_end=cond_end,
-                        spatial_condition_latents=spatial_condition_latents,
-                        spatial_condition_masks=spatial_condition_masks,
-                        spatial_condition_prefix_latents=spatial_condition_prefix_latents,
-                    )
+                    # The benchmark output goes first: it is the deliverable, and the
+                    # side-by-side diagnostic dump below decodes far more pixels (it
+                    # upsamples masks and condition latents to full resolution), so on a
+                    # long rollout it can run out of memory and take the real output
+                    # down with it.
                     if _wbench:
                         self._save_wbench_output_video(
                             mode_cfg=mode_cfg,
@@ -1448,6 +1451,22 @@ class RolloutTrainer:
                             N=N,
                             gap_steps=gap_steps,
                             cond_end=cond_end,
+                        )
+                    if self.cfg.validation.save_debug_videos:
+                        self._save_validation_videos(
+                            mode_dir=mode_dir,
+                            stem=stem,
+                            latent_full=latent_full,
+                            pred_latents=pred_latents,
+                            nearby_condition_latents=nearby_condition_latents,
+                            metadata=metadata,
+                            K=K,
+                            N=N,
+                            gap_steps=gap_steps,
+                            cond_end=cond_end,
+                            spatial_condition_latents=spatial_condition_latents,
+                            spatial_condition_masks=spatial_condition_masks,
+                            spatial_condition_prefix_latents=spatial_condition_prefix_latents,
                         )
                 del context, scheduled_contexts, metrics, pred_latents, nearby_condition_latents, spatial_condition_latents, spatial_condition_masks, spatial_condition_prefix_latents, payload
                 self._cleanup_after_validation()
@@ -2099,6 +2118,7 @@ class RolloutTrainer:
         N: int,
         gap_steps: int,
         cond_end: int,
+        noise_generator: torch.Generator | None = None,
     ) -> tuple[
         list[dict[str, Any]],
         list[torch.Tensor],
@@ -2330,7 +2350,11 @@ class RolloutTrainer:
                     dtype=self.dtype,
                 )
 
-            x_t = torch.randn(B, latent_full.shape[1], K, H_lat, W_lat, device=self.dist.device, dtype=self.dtype)
+            x_t = torch.randn(
+                B, latent_full.shape[1], K, H_lat, W_lat,
+                device=self.dist.device, dtype=self.dtype,
+                generator=noise_generator,   # None -> the rank's global stream, as before
+            )
             for sample_step in range(len(sigmas) - 1):
                 sigma_now = sigmas[sample_step]
                 sigma_next = sigmas[sample_step + 1]
@@ -2494,6 +2518,43 @@ class RolloutTrainer:
             spatial_condition_masks,
             spatial_condition_prefix_latents,
         )
+
+    def _validation_noise_generator(
+        self, metadata: dict[str, Any], variant_index: int = 0
+    ) -> torch.Generator | None:
+        """A per-sample CUDA generator, or None to keep using the rank's global stream.
+
+        The rollout draws its noise sequentially from the rank's stream, which is
+        seeded once as run.seed + rank. That makes a sample's noise depend on its rank
+        and on how many samples preceded it, so the same case renders differently under
+        a different GPU count, case order, subset or --resume. Keying the generator on
+        the sample's own id instead makes a case reproducible from run.seed alone.
+        """
+        if not bool(getattr(self.cfg.validation, "per_sample_seed", False)):
+            return None
+        key = str(
+            metadata.get("wbench_case_id")
+            or metadata.get("video_id")
+            or metadata.get("wbench_first_frame_src")
+            or ""
+        ).strip()
+        if not key:
+            # No stable per-sample id to key on. Seeding them all alike would be worse
+            # than the status quo (every sample would draw the same noise), so fall
+            # back to the rank's global stream.
+            rank0_print(
+                self.dist,
+                "[Validation]",
+                "per_sample_seed is on but this sample carries no id; using the global stream",
+            )
+            return None
+        digest = hashlib.sha1(
+            f"{int(self.cfg.run.seed)}|{key}|{int(variant_index)}".encode("utf-8")
+        ).digest()
+        seed = int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
+        generator = torch.Generator(device=self.dist.device)
+        generator.manual_seed(seed)
+        return generator
 
     def _validation_sigmas(self, *, latent_frames: int | None = None) -> torch.Tensor:
         steps = int(self.cfg.validation.sampling_steps)
@@ -3021,6 +3082,8 @@ class RolloutTrainer:
         decoder = self.components.vae_decoder
         decode_chunk = self.cfg.runtime.vae_decode_chunk_latents
         chunk_latents = max(1, int(decode_chunk if decode_chunk is not None else self.cfg.runtime.vae_chunk_size))
+        if int(getattr(self.cfg.runtime, "vae_decode_overlap_latents", 0) or 0) > 0:
+            return self._decode_latent_overlap_tiled(latent, chunk_latents=chunk_latents)
         frames = []
         total_latents = int(latent.shape[2])
         for start in range(0, total_latents, chunk_latents):
@@ -3034,6 +3097,43 @@ class RolloutTrainer:
                 chunk_frames = chunk_frames[1:]
             frames.append((chunk_frames * 255.0).to(torch.uint8).cpu())
             del chunk, pixel, chunk_frames
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        return torch.cat(frames, dim=0)
+
+    def _decode_latent_overlap_tiled(self, latent: torch.Tensor, *, chunk_latents: int) -> torch.Tensor:
+        """Seamless, memory-bounded decode of [B,C,T,H,W] -> uint8 frames [T,H,W,C].
+
+        Each core chunk [s:e) is decoded with `runtime.vae_decode_overlap_latents`
+        neighbour latents of context on each side, and only the core's frames are
+        kept. That supplies the LTX decoder's cross-chunk temporal dependency, so
+        the result is frame-exact with a whole decode (once overlap >= the decoder's
+        receptive field, ~6 latents) instead of showing a seam per chunk boundary.
+        A whole decode of a minute-long rollout at 544x960 needs far more than a
+        24GB card has. Ported from alaya/inference/engine.py.
+        """
+        assert self.components is not None
+        decoder = self.components.vae_decoder
+        overlap = max(1, int(getattr(self.cfg.runtime, "vae_decode_overlap_latents", 6) or 6))
+        total_latents = int(latent.shape[2])
+        r = int(self.cfg.sample.temporal_stride)
+        frames = []
+        # latent->pixel temporal map (r-x upsample, first latent special):
+        # latent0 -> 1 frame; latent j>=1 -> r frames at global [r(j-1)+1, rj].
+        for s in range(0, total_latents, chunk_latents):
+            e = min(total_latents, s + chunk_latents)
+            a = max(0, s - overlap)
+            b = min(total_latents, e + overlap)
+            ctx = latent[:, :, a:b].to(device=self.dist.device, dtype=self.dtype)
+            with torch.no_grad():
+                pixel = decoder(ctx)
+            pixel = (pixel * 0.5 + 0.5).clamp(0, 1)
+            tile = pixel.squeeze(0).permute(1, 2, 3, 0).contiguous()
+            k_s = s - a
+            lo = 0 if s == 0 else r * (k_s - 1) + 1
+            hi = r * (e - 1 - a) + 1
+            frames.append((tile[lo:hi] * 255.0).to(torch.uint8).cpu())
+            del ctx, pixel, tile
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         return torch.cat(frames, dim=0)

@@ -64,6 +64,9 @@ def main() -> None:
         trainer.describe()
         return
     if args.validate_only:
+        import os as _os
+
+        _os.environ.setdefault("ALAYA_SKIP_TRAIN_DATALOADER", "1")
         trainer.setup()
         trainer.validate(trainer.global_step)
         return

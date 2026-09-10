@@ -427,6 +427,10 @@ class ValidationDatasetConfig:
     # ===== fields specific to source == "wbench_navi" =====
     root: str | None = None            # benchmark data root (cases / images / masks)
     case_ids: list[str] = field(default_factory=list)  # empty = all cases
+    # false = the 158-case navi split (cases with >=1 W/A/S/D/arrow turn);
+    # true  = the 289-case full split, for text-driven models that can also serve
+    #         event_edit / subject_action / perspective_switch turns from the prompt.
+    include_non_navigation: bool = False
     image_dir: str | None = None       # custom first-frame directory (reusing the actions of pose_case_id)
     pose_case_id: str | None = None
     pose_actions: list[str] = field(default_factory=list)
@@ -534,7 +538,17 @@ class ValidationConfig:
     stg_blocks: list[int] = field(default_factory=lambda: [28])
     rescale_scale: float = 0.7
     step_dir_suffix: str = ""
+    # Derive the rollout noise from a per-sample generator keyed on the sample's own
+    # id instead of drawing from the rank's global CUDA stream. Without it the noise a
+    # sample receives depends on which rank it landed on and how many samples ran
+    # before it, so the same case gives different video under a different GPU count,
+    # case ordering, subset or --resume. Set false for the historical behaviour.
+    per_sample_seed: bool = True
     save_videos: bool = True
+    # The extra per-sample diagnostic dump (prediction vs GT vs condition vs mask
+    # strips) written next to the mode dir. Costs a lot of memory and disk on long
+    # rollouts; turn it off to keep only the benchmark output.
+    save_debug_videos: bool = True
     save_joystick: bool = True
     # ViGeo validation rollout: how generated chunks are handed over and how predictions are decoded
     vigeo_handoff_mode: str = "rgb_reencode"

@@ -357,6 +357,9 @@ def build_validation_dataset(
             sekai_caption_base=(mode_cfg.dataset.annotation_base_dir or cfg.paths.annotation_base_dir),
             sekai_random_n=int(mode_cfg.dataset.sekai_random_n),
             sekai_seed=int(mode_cfg.dataset.sekai_seed),
+            include_non_navigation=bool(
+                getattr(mode_cfg.dataset, "include_non_navigation", False)
+            ),
         )
     sources = SOURCE_ALIASES.get(source_name, [source_name])
     caption_anchor_frame = _validation_caption_anchor_frame(cfg, mode_cfg)

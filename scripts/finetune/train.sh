@@ -62,11 +62,13 @@ fi
 export TOKENIZERS_PARALLELISM=false
 export PYTHONPATH="${PYTHONPATH:-}:$(pwd)"
 
-# ===== flash-attn-3 (used when a local build is available) =====
-# Point FA3_HOPPER at a local flash-attn-3 (hopper) build; loss is bit-identical to FA2.
-# ALAYA_USE_FA3=0 disables it; a missing build falls back to FA2 automatically.
+# ===== flash-attn-3 (opt-in) =====
+# FA2 is the default. FA3 is Hopper-only, has to be built locally, and cannot coexist
+# with the xformers that ViGeo/DA3 pull in -- loading both aborts the process at the
+# C++ level, which is not catchable. Opt in with ALAYA_USE_FA3=1 plus an FA3_HOPPER
+# build; loss is bit-identical to FA2.
 FA3_HOPPER=${FA3_HOPPER:-}
-if [ "${ALAYA_USE_FA3:-1}" = "1" ] && [ -f "$FA3_HOPPER/build/lib.linux-x86_64-3.10/flash_attn_3/_C.abi3.so" ]; then
+if [ "${ALAYA_USE_FA3:-0}" = "1" ] && [ -f "$FA3_HOPPER/build/lib.linux-x86_64-3.10/flash_attn_3/_C.abi3.so" ]; then
   export ALAYA_USE_FA3=1
   export PYTHONPATH="$FA3_HOPPER/build/lib.linux-x86_64-3.10:$FA3_HOPPER:$PYTHONPATH"
   TORCH_LIB=$(python -c "import os, torch; print(os.path.join(os.path.dirname(torch.__file__), 'lib'))")

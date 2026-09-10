@@ -23,6 +23,18 @@ from alaya.model.fsdp import maybe_enable_gradient_checkpointing
 from alaya.model.lora import LoRAForwardManager
 
 
+def _release_host_arenas() -> None:
+    """gc + malloc_trim: return freed host pages to the OS after a big load."""
+    import ctypes
+    import gc
+
+    gc.collect()
+    try:
+        ctypes.CDLL(None).malloc_trim(0)
+    except (AttributeError, OSError):
+        pass
+
+
 def _rank0() -> bool:
     """torchrun sets RANK per process (0 when unset). Print from rank 0 only to avoid duplicate lines."""
     import os
@@ -112,7 +124,16 @@ def build_model_components(cfg: TrainConfig, device: torch.device, dtype: torch.
 
     vae_encoder_raw, vae_decoder = load_vae(cfg.paths.vae, device=device, dtype=dtype)
     vae_encoder = StreamingVAEEncoder(vae_encoder_raw, device=device, dtype=dtype)
-    text_encoder, encode_text = load_text_encoder(checkpoint_path, cfg.paths.gemma, device=device, dtype=dtype)
+    if os.environ.get("ALAYA_SKIP_TEXT_ENCODER", "0") == "1":
+        # Gemma-3-12B is 24GB in bf16 and does not fit next to the DiT on a 24GB card.
+        # With every reachable prompt already in runtime.text_embed_cache_dir (see
+        # scripts/tools/precache_wbench_text_embeds.py) the encoder is never called,
+        # so skip loading it. A cache miss raises instead of silently mis-encoding.
+        if _rank0():
+            print("[TextEncoder] skipped (ALAYA_SKIP_TEXT_ENCODER=1); prompts must come from the disk cache")
+        text_encoder, encode_text = None, _text_encoder_disabled
+    else:
+        text_encoder, encode_text = load_text_encoder(checkpoint_path, cfg.paths.gemma, device=device, dtype=dtype)
 
     return ModelComponents(
         transformer=transformer,
@@ -162,16 +183,34 @@ def load_transformer(checkpoint_path: str, cfg: TrainConfig, device: torch.devic
     filtered = {key: value for key, value in config.items() if key in valid_params}
     model = LTX23Model(**filtered)
 
+    # NOTE: do not be tempted to skip this read because paths.resume_checkpoint
+    # overwrites every tensor anyway. The history encoder's lr_proj buffers are
+    # snapshotted from transformer.patchify_proj in RolloutTrainer.setup(), which runs
+    # *before* the resume load, so the base weights must already be in place by then.
     if checkpoint_path and Path(checkpoint_path).exists():
-        state_dict = safetensors.torch.load_file(checkpoint_path, device="cpu")
         model_keys = {name for name, _ in model.named_parameters()}
         model_keys.update(name for name, _ in model.named_buffers())
-        converted = convert_transformer_state_dict(state_dict, model_keys)
+        converted = _load_transformer_state_streaming(checkpoint_path, model_keys)
         missing, unexpected = model.load_state_dict(converted, strict=False)
+        del converted
         if _rank0():
-            print(f"[Transformer] loaded={len(converted)} missing={len(missing)} unexpected={len(unexpected)}")
+            print(f"[Transformer] missing={len(missing)} unexpected={len(unexpected)}")
 
-    model.to(device=device, dtype=dtype)
+    # ALAYA_INIT_TRANSFORMER_ON_CPU=1 keeps the DiT on CPU here so that
+    # maybe_wrap_fsdp() shards it onto the GPUs unit by unit. Needed whenever the
+    # unsharded model does not fit in one device (13B bf16 = 26GB vs a 24GB card);
+    # each FSDP unit is moved and sharded on its own, so the GPU never holds the
+    # whole model. Unset, the behaviour is unchanged.
+    if os.environ.get("ALAYA_INIT_TRANSFORMER_ON_CPU", "0") == "1":
+        model.to(device="cpu", dtype=dtype)
+        # LTX23Model is constructed in fp32 (52GB for 13B), so the bf16 cast leaves
+        # ~26GB of freed-but-unreturned arenas behind. With one rank per GPU that is
+        # the difference between fitting in host RAM and thrashing, so hand it back.
+        _release_host_arenas()
+        if _rank0():
+            print("[Transformer] kept on CPU for FSDP sharding (ALAYA_INIT_TRANSFORMER_ON_CPU=1)")
+    else:
+        model.to(device=device, dtype=dtype)
     if _rank0():
         print(f"[Transformer] params={sum(p.numel() for p in model.parameters()) / 1e9:.2f}B")
     return model
@@ -225,33 +264,59 @@ def _set_action_adaln_trainable(model: nn.Module, enabled: bool) -> int:
     return count
 
 
+_TRANSFORMER_SKIP_PREFIXES = (
+    "audio_",
+    "av_ca_",
+    "_a2v_",
+    "_v2a_",
+    "vae.",
+    "vocoder.",
+    "text_embedding_projection.",
+    "model.diffusion_model.video_embeddings_connector.",
+    "model.diffusion_model.audio_",
+    "model.diffusion_model.av_ca_",
+)
+
+
+def resolve_transformer_key(raw_key: str, model_keys: set[str]) -> str | None:
+    """Map a checkpoint key onto the model's own name, or None if it is not ours."""
+    if any(raw_key.startswith(prefix) for prefix in _TRANSFORMER_SKIP_PREFIXES):
+        return None
+    candidates = []
+    if raw_key.startswith("model.diffusion_model."):
+        candidates.append(raw_key.removeprefix("model.diffusion_model.").replace("transformer_blocks.", "blocks."))
+    cleaned = raw_key.replace("_fsdp_wrapped_module.", "").replace("_checkpoint_wrapped_module.", "")
+    cleaned = cleaned.replace("transformer_blocks.", "blocks.")
+    candidates.extend([cleaned, raw_key])
+    for key in candidates:
+        if key in model_keys:
+            return key
+    return None
+
+
 def convert_transformer_state_dict(state_dict: dict, model_keys: set[str]) -> dict:
     converted = {}
-    skip_prefixes = (
-        "audio_",
-        "av_ca_",
-        "_a2v_",
-        "_v2a_",
-        "vae.",
-        "vocoder.",
-        "text_embedding_projection.",
-        "model.diffusion_model.video_embeddings_connector.",
-        "model.diffusion_model.audio_",
-        "model.diffusion_model.av_ca_",
-    )
     for raw_key, value in state_dict.items():
-        if any(raw_key.startswith(prefix) for prefix in skip_prefixes):
-            continue
-        candidates = []
-        if raw_key.startswith("model.diffusion_model."):
-            candidates.append(raw_key.removeprefix("model.diffusion_model.").replace("transformer_blocks.", "blocks."))
-        cleaned = raw_key.replace("_fsdp_wrapped_module.", "").replace("_checkpoint_wrapped_module.", "")
-        cleaned = cleaned.replace("transformer_blocks.", "blocks.")
-        candidates.extend([cleaned, raw_key])
-        for key in candidates:
-            if key in model_keys:
-                converted[key] = value
-                break
+        key = resolve_transformer_key(raw_key, model_keys)
+        if key is not None:
+            converted[key] = value
+    return converted
+
+
+def _load_transformer_state_streaming(checkpoint_path: str, model_keys: set[str]) -> dict:
+    """Read only the tensors this model actually uses, one at a time.
+
+    The LTX-2.3 release file is 43GB but roughly 26GB of it is the video DiT; the
+    rest (audio branch, vocoder, VAE, text projections) is skipped here. Loading
+    the whole dict first costs that full 43GB of host RAM per rank, which does not
+    scale to one rank per GPU.
+    """
+    converted: dict = {}
+    with safetensors.safe_open(checkpoint_path, framework="pt") as handle:
+        for raw_key in handle.keys():
+            key = resolve_transformer_key(raw_key, model_keys)
+            if key is not None:
+                converted[key] = handle.get_tensor(raw_key)
     return converted
 
 
@@ -269,7 +334,13 @@ def load_vae(
     # da3 inference: a preloaded merged state may be shared so the one-file
     # checkpoint is read once; None (vigeo paths) keeps the original behavior.
     if state_dict is None and checkpoint_path and Path(checkpoint_path).exists():
-        state_dict = safetensors.torch.load_file(checkpoint_path, device="cpu")
+        # Only the vae.* tensors, not the whole (43GB) release file — see
+        # _load_transformer_state_streaming for why.
+        state_dict = {}
+        with safetensors.safe_open(checkpoint_path, framework="pt") as handle:
+            for raw_key in handle.keys():
+                if raw_key.startswith("vae."):
+                    state_dict[raw_key] = handle.get_tensor(raw_key)
     if state_dict is not None:
         enc = {}
         dec = {}
@@ -291,6 +362,14 @@ def load_vae(
         for param in module.parameters():
             param.requires_grad_(False)
     return encoder, decoder
+
+
+def _text_encoder_disabled(*args, **kwargs):
+    raise RuntimeError(
+        "text encoder is disabled (ALAYA_SKIP_TEXT_ENCODER=1) but a prompt missed the "
+        "on-disk embedding cache. Re-run scripts/tools/precache_wbench_text_embeds.py "
+        "so every prompt of this run is cached, or unset ALAYA_SKIP_TEXT_ENCODER."
+    )
 
 
 def load_text_encoder(
@@ -331,12 +410,35 @@ def load_text_encoder(
     )
 
     tokenizer = LTXVGemmaTokenizer(gemma_root)
-    gemma = Gemma3ForConditionalGeneration.from_pretrained(
-        gemma_root,
-        local_files_only=True,
-        dtype=dtype,
-        torch_dtype=dtype,
-    ).to(device).eval()
+    # ALAYA_GEMMA_DEVICE_MAP (e.g. "auto") spreads the 24GB text encoder over several
+    # devices via accelerate, for machines where it does not fit on one GPU.
+    _device_map = os.environ.get("ALAYA_GEMMA_DEVICE_MAP", "").strip()
+    if _device_map:
+        # ALAYA_GEMMA_MAX_MEMORY, e.g. "0=14GiB,1=14GiB", forces an even split;
+        # device_map="auto" alone fills the first GPU before spilling to the next.
+        _max_memory = None
+        _raw_mm = os.environ.get("ALAYA_GEMMA_MAX_MEMORY", "").strip()
+        if _raw_mm:
+            _max_memory = {}
+            for item in _raw_mm.split(","):
+                k, _, v = item.partition("=")
+                k = k.strip()
+                _max_memory[int(k) if k.isdigit() else k] = v.strip()
+        gemma = Gemma3ForConditionalGeneration.from_pretrained(
+            gemma_root,
+            local_files_only=True,
+            dtype=dtype,
+            torch_dtype=dtype,
+            device_map=_device_map,
+            max_memory=_max_memory,
+        ).eval()
+    else:
+        gemma = Gemma3ForConditionalGeneration.from_pretrained(
+            gemma_root,
+            local_files_only=True,
+            dtype=dtype,
+            torch_dtype=dtype,
+        ).to(device).eval()
     text_encoder = AVGemmaTextEncoderModel(
         feature_extractor,
         connector,
@@ -349,7 +451,13 @@ def load_text_encoder(
     )
 
     if state_dict is None:  # da3: shared merged state when provided; else read here (vigeo path)
-        state_dict = safetensors.torch.load_file(checkpoint_path, device="cpu")
+        # Only the two prefixes consumed below, not the whole release file.
+        _wanted = ("text_embedding_projection.", "model.diffusion_model.video_embeddings_connector.")
+        state_dict = {}
+        with safetensors.safe_open(checkpoint_path, framework="pt") as handle:
+            for raw_key in handle.keys():
+                if raw_key.startswith(_wanted):
+                    state_dict[raw_key] = handle.get_tensor(raw_key)
     fe = {
         key.removeprefix("text_embedding_projection."): value
         for key, value in state_dict.items()
@@ -365,7 +473,29 @@ def load_text_encoder(
     if ec:
         text_encoder.embeddings_connector.load_state_dict(ec, strict=False)
 
-    text_encoder.to(device).eval()
+    if _device_map:
+        # Gemma is already placed by accelerate across several devices; moving the
+        # whole wrapper would undo that. Only the two small LTX heads need placing,
+        # on the device Gemma's own output lands on.
+        _head_device = getattr(gemma, "device", device)
+        text_encoder.feature_extractor_linear.to(_head_device)
+        text_encoder.embeddings_connector.to(_head_device)
+        # The encoder stacks *every* layer's hidden state; with the layers split over
+        # devices those tensors come back on whichever device produced them, so bring
+        # them together before torch.stack sees them.
+        _inner_forward = gemma.forward
+
+        def _forward_aligned(*a, **kw):
+            out = _inner_forward(*a, **kw)
+            hs = getattr(out, "hidden_states", None)
+            if hs is not None:
+                out.hidden_states = tuple(h.to(_head_device) for h in hs)
+            return out
+
+        gemma.forward = _forward_aligned
+        text_encoder.eval()
+    else:
+        text_encoder.to(device).eval()
     for param in text_encoder.parameters():
         param.requires_grad_(False)
 
