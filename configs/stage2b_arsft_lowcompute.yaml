@@ -211,7 +211,7 @@ optimizer:
   checkpoint_steps: 100
   max_checkpoints: 5
   log_steps: 1
-  max_steps: 600
+  max_steps: 300
 runtime:
   dtype: bf16
   text_embed_cache_entries: 4096

@@ -157,7 +157,7 @@ is byte-identical to stage2b.
 |---|---|
 | **Peak memory, per rank** | **17.9GB allocated** / 22.9GB reserved, of 24GB |
 | Throughput | **11.9s per micro-batch**, so ~49s per optimizer step at `grad_accum_steps: 4` |
-| | 600 optimizer steps ~ **8.2h**. Note the `time=` field in `[Train]` lines is the LAST micro-batch only — `step_start` resets every dataloader iteration — so it under-reports the optimizer step by the accumulation factor. |
+| | 300 optimizer steps ~ **4.1h** (the shipped `max_steps`); 600 would be ~8.2h. Note the `time=` field in `[Train]` lines is the LAST micro-batch only — `step_start` resets every dataloader iteration — so it under-reports the optimizer step by the accumulation factor. |
 | Startup | ~6 min — ranks build the model one at a time under `ALAYA_SERIAL_MODEL_LOAD` |
 | GPU 5 | 94MiB throughout, i.e. untouched |
 
@@ -202,9 +202,9 @@ understand:
 
 ```bash
 python scripts/tools/merge_lora_for_rollout.py \
-    --ckpt_dir outputs/stage2b_lowcompute/checkpoint-600 \
+    --ckpt_dir outputs/stage2b_lowcompute/checkpoint-300 \
     --base_transformer weights/alaya-world-ar/transformer.pt \
-    --output outputs/stage2b_lowcompute/checkpoint-600-merged \
+    --output outputs/stage2b_lowcompute/checkpoint-300-merged \
     --lora_rank 64 --lora_alpha 64
 ```
 
@@ -218,7 +218,7 @@ a checkpoint that loads cleanly and generates subtly wrong video.
 
 ## 7. Limitations
 
-- The acceptance run is 600 optimizer steps on 200 clips. That is enough to show the machinery
+- The acceptance run is 300 optimizer steps on 200 clips. That is enough to show the machinery
   works end to end and far too little to claim any quality improvement. No such claim is made.
 - 416x736 is not the checkpoint's native 544x960, nor the resolution WBench evaluates at, so a
   quality comparison against the released model would not be apples-to-apples.
