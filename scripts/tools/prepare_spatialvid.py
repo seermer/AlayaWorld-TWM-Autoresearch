@@ -54,6 +54,21 @@ def _open(url: str):
     return urllib.request.urlopen(request, timeout=120)
 
 
+def _atomic_write(target: Path, data: bytes) -> None:
+    """Write `data` to `target` via a temporary sibling file, then rename atomically.
+
+    A run killed mid-write (SIGKILL/OOM/disk-full) would otherwise leave a partial
+    file at `target`; a re-run's `exists()` check would then silently reuse the
+    truncated file. os.replace() is atomic within a filesystem, so a killed run
+    leaves either nothing or a complete file at `target`, never a partial one.
+    """
+    part = target.with_name(target.name + ".part")
+    if part.exists():
+        part.unlink()
+    part.write_bytes(data)
+    os.replace(part, target)
+
+
 def eligible_ids(group: str, min_frames: int, max_ocr: float, min_dist_level: int) -> dict[str, dict]:
     """Stream the metadata CSV and return {id: row} for the clips worth training on.
 
@@ -107,7 +122,7 @@ def stream_videos(group: str, eligible: dict[str, dict], want: int, out_dir: Pat
                     handle = tar.extractfile(member)
                     if handle is None:
                         continue
-                    target.write_bytes(handle.read())
+                    _atomic_write(target, handle.read())
                 taken.append(clip_id)
                 print(f"[prepare]   video {len(taken)}/{want} {clip_id}", flush=True)
                 if len(taken) >= want:
@@ -143,7 +158,7 @@ def stream_annotations(group: str, wanted: set[str], out_dir: Path) -> None:
                 handle = tar.extractfile(member)
                 if handle is None:
                     continue
-                destination.write_bytes(handle.read())
+                _atomic_write(destination, handle.read())
                 if path.name == "poses.npy":
                     found.add(clip_id)
                     print(f"[prepare]   annotation {len(found)}/{len(wanted)} {clip_id}", flush=True)
@@ -160,7 +175,7 @@ def convert(clip_id: str, meta: dict, staging: Path, ann_root: Path) -> dict | N
         intrinsics = np.load(source / "intrinsics.npy")
         frames = parse_indexes((source / "indexes.txt").read_text(encoding="utf-8"))
         caption = json.loads((source / "caption.json").read_text(encoding="utf-8"))
-    except (FileNotFoundError, ValueError) as exc:
+    except (FileNotFoundError, ValueError, EOFError) as exc:
         print(f"[prepare]   skip {clip_id}: {exc}", flush=True)
         return None
 
