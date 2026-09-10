@@ -367,8 +367,9 @@ def load_vae(
 def _text_encoder_disabled(*args, **kwargs):
     raise RuntimeError(
         "text encoder is disabled (ALAYA_SKIP_TEXT_ENCODER=1) but a prompt missed the "
-        "on-disk embedding cache. Re-run scripts/tools/precache_wbench_text_embeds.py "
-        "so every prompt of this run is cached, or unset ALAYA_SKIP_TEXT_ENCODER."
+        "on-disk embedding cache. Re-run scripts/tools/precache_train_text_embeds.py "
+        "for a training run, or scripts/tools/precache_wbench_text_embeds.py for WBench "
+        "generation, so every prompt of this run is cached, or unset ALAYA_SKIP_TEXT_ENCODER."
     )
 
 
