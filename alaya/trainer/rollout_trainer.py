@@ -433,6 +433,20 @@ class RolloutTrainer:
                         self._vae_cache_hits = 0
                         self._vae_cache_misses = 0
 
+                if os.environ.get("ALAYA_LOG_MEMORY", "0") == "1" and torch.cuda.is_available():
+                    # nvidia-smi reports RESERVED memory, which the caching allocator grows to
+                    # fill whatever is free -- it measures the allocator's appetite, not the
+                    # run's actual need. max_memory_allocated is the live-tensor high-water
+                    # mark, which is what tells you whether a config really fits. Printed from
+                    # every rank because the peak differs per rank with the sampled clip.
+                    print(
+                        f"[Mem] step={self.global_step} rank={self.dist.rank} "
+                        f"alloc_peak={torch.cuda.max_memory_allocated() / 2**30:.2f}GB "
+                        f"reserved_peak={torch.cuda.max_memory_reserved() / 2**30:.2f}GB",
+                        flush=True,
+                    )
+                    torch.cuda.reset_peak_memory_stats()
+
                 if self.global_step % self.cfg.optimizer.checkpoint_steps == 0:
                     try:
                         self._cleanup_cuda_cache()
