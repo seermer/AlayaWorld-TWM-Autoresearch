@@ -188,7 +188,7 @@ def main():
 
     print(f"\n[Merge] DONE. merged {n_merged} layers.")
     print(f"[Merge] output dir: {out_dir}")
-    print(f"  - diffusion_pytorch_model.safetensors  (base + LoRA merged)")
+    print(f"  - {out_name}  (base + LoRA merged)")
     print(f"  - history_encoder.pt                    (stage-1 HE)")
 
 
