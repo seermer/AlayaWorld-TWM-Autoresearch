@@ -216,7 +216,7 @@ mechanism by which this work leaves inference and WBench alone**, rather than a 
 An unmatched LoRA key is now fatal rather than a warning: a silently skipped adapter produces
 a checkpoint that loads cleanly and generates subtly wrong video.
 
-### Two things to change before rendering on 24GB cards
+### Three things to change before rendering on 24GB cards
 
 `configs/infer_i2v_camera_ar.yaml` is written for 80GB hardware, so a copy of it needs the same
 two adaptations `configs/wbench_full.yaml` already carries. Copy it rather than editing it in
@@ -226,7 +226,12 @@ place -- the shipped config is left alone on purpose.
    model that validation never touches. On this box that is an immediate host-RAM OOM: the
    rank is SIGKILLed and torchrun reports the unhelpful `exitcode: -9`. Confirmed by
    `[DMD] real/fake score base` appearing once per rank in the log.
-2. **The text encoder must be off.** Gemma-3-12B is 24GB and cannot sit beside the sharded
+2. **`spatial_memory.vigeo_cache_budget: 65536`** (the AR config ships 262144, sized for 80GB
+   cards). Left alone, a 5-round rollout at 544x960 dies with a CUDA OOM partway through --
+   measured here at round 3 of 5, with 22.27GB already allocated. `validation.save_debug_videos:
+   false` is worth setting too: the diagnostic strip decodes far more pixels than the output
+   video itself.
+3. **The text encoder must be off.** Gemma-3-12B is 24GB and cannot sit beside the sharded
    DiT at inference either, so precache the prompts and run with `ALAYA_SKIP_TEXT_ENCODER=1`,
    exactly as [`docs/WBENCH.md`](WBENCH.md) does for generation.
 
