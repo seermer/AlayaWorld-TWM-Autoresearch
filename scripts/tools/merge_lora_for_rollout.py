@@ -74,6 +74,29 @@ def merge_lora(base_path: Path, lora_path: Path, alpha: float, rank: int,
             raise ValueError(f"unexpected lora key suffix: {k}")
     print(f"[Merge] LoRA pairs: {len(lora_pairs)}")
 
+    # Validate the caller-supplied rank against the LoRA's actual rank, once,
+    # before touching any base weight. The shape assert down in the merge loop
+    # cannot catch a wrong rank: A is [rank, in] and B is [out, rank], so
+    # B @ A is always [out, in] regardless of what rank actually is -- a wrong
+    # --lora_rank silently rescales the whole delta (e.g. alpha=128/rank=128
+    # given a true rank-64 LoRA merges at 2x) instead of raising. This loop only
+    # reads tensor .shape (metadata), so it is O(pairs), not O(base size).
+    for module_key, AB in lora_pairs.items():
+        if 'A' not in AB or 'B' not in AB:
+            continue
+        true_rank = AB['A'].shape[0]
+        if AB['B'].shape[1] != true_rank:
+            raise SystemExit(
+                f"[Merge] {module_key}: lora_A rank {AB['A'].shape[0]} != "
+                f"lora_B rank {AB['B'].shape[1]} (internally inconsistent LoRA file)"
+            )
+        if true_rank != rank:
+            raise SystemExit(
+                f"[Merge] --lora_rank {rank} does not match the LoRA's actual rank "
+                f"{true_rank} (from {module_key}). A wrong rank silently rescales the "
+                f"merge delta instead of raising; pass --lora_rank {true_rank}."
+            )
+
     # Merge: clone base_sd, then add the delta layer by layer
     out_sd = {k: v.clone() for k, v in base_sd.items()}
     merged = 0
