@@ -156,7 +156,8 @@ is byte-identical to stage2b.
 | | |
 |---|---|
 | **Peak memory, per rank** | **17.9GB allocated** / 22.9GB reserved, of 24GB |
-| Throughput | 11.9s per optimizer step (mean over 30; each step is 4 micro-batches) |
+| Throughput | **11.9s per micro-batch**, so ~49s per optimizer step at `grad_accum_steps: 4` |
+| | 600 optimizer steps ~ **8.2h**. Note the `time=` field in `[Train]` lines is the LAST micro-batch only — `step_start` resets every dataloader iteration — so it under-reports the optimizer step by the accumulation factor. |
 | Startup | ~6 min — ranks build the model one at a time under `ALAYA_SERIAL_MODEL_LOAD` |
 | GPU 5 | 94MiB throughout, i.e. untouched |
 
