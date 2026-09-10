@@ -10,8 +10,21 @@
 # ============================================================================
 set -euo pipefail
 
-# GPU 5 is deliberately excluded and must stay free.
+# GPU 5 is deliberately excluded and must stay free. If CUDA_VISIBLE_DEVICES is
+# unset/empty, default to the safe set; if it is set (inherited from the shell,
+# a scheduler, or a prior export), validate it instead of passing it through
+# unfiltered -- a whole-entry match so "15" never trips a check for "5".
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3,4}
+IFS=',' read -ra _alaya_gpus <<< "$CUDA_VISIBLE_DEVICES"
+for _alaya_gpu in "${_alaya_gpus[@]}"; do
+    if [[ "$_alaya_gpu" == "5" ]]; then
+        echo "ERROR: CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES includes GPU 5," \
+             "which must stay free. Remove it and re-run." >&2
+        exit 1
+    fi
+done
+unset _alaya_gpu _alaya_gpus
+echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 
 # The 13B DiT is 26GB in bf16 and does not fit unsharded on a 24GB card. Building
 # it on CPU lets FSDP move and shard it one attention block at a time.
