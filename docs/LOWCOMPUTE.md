@@ -216,7 +216,7 @@ mechanism by which this work leaves inference and WBench alone**, rather than a 
 An unmatched LoRA key is now fatal rather than a warning: a silently skipped adapter produces
 a checkpoint that loads cleanly and generates subtly wrong video.
 
-### Three things to change before rendering on 24GB cards
+### Four things to change before rendering on 24GB cards
 
 `configs/infer_i2v_camera_ar.yaml` is written for 80GB hardware, so a copy of it needs the same
 two adaptations `configs/wbench_full.yaml` already carries. Copy it rather than editing it in
@@ -231,9 +231,22 @@ place -- the shipped config is left alone on purpose.
    measured here at round 3 of 5, with 22.27GB already allocated. `validation.save_debug_videos:
    false` is worth setting too: the diagnostic strip decodes far more pixels than the output
    video itself.
-3. **The text encoder must be off.** Gemma-3-12B is 24GB and cannot sit beside the sharded
+3. **`vae_decode_chunk_latents: 8` + `vae_decode_overlap_latents: 6`.** The AR config ships
+   `161`, i.e. a whole-video decode, which exceeds a 24GB card at 544x960. The overlap-tiled
+   decode was ported for exactly this and is frame-exact with a whole decode rather than
+   leaving a seam per chunk. Left alone, generation completes and every sidecar is written,
+   and then the run dies during decode -- so you get a `.json` and no `.mp4`, which looks
+   like a save bug rather than a memory one.
+4. **The text encoder must be off.** Gemma-3-12B is 24GB and cannot sit beside the sharded
    DiT at inference either, so precache the prompts and run with `ALAYA_SKIP_TEXT_ENCODER=1`,
    exactly as [`docs/WBENCH.md`](WBENCH.md) does for generation.
+
+In short: `configs/wbench_full.yaml` already carries all four. Diffing the AR inference config
+against it is the fastest way to see what 24GB hardware needs.
+
+One more operational note: validation **skips a mode whose output directory already exists**
+(`[Validation] skip existing mode_dir=...`). A previous failed attempt leaves that directory
+behind, so the next run silently generates nothing. Delete it before retrying.
 
 Also note that with `ALAYA_INIT_TRANSFORMER_ON_CPU=1` all five ranks hold a 26GB CPU-resident
 model at once. Merging writes 26GB straight into the page cache, so running a merge and a
