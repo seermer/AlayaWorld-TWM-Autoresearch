@@ -11,11 +11,18 @@ Usage:
 Inputs:
     ckpt_dir/lora.safetensors           (480 LoRA pairs, rank=128)
     ckpt_dir/history_encoder.pt         (HistoryEncoder state; copied as-is, not merged)
-    base_transformer (safetensors)      (clean base transformer)
+    base_transformer (.safetensors or .pt)   (clean base transformer)
 
 Outputs:
-    output/diffusion_pytorch_model.safetensors   (base + LoRA delta merged)
+    The output filename mirrors the base's format:
+      - a .safetensors base -> output/diffusion_pytorch_model.safetensors
+      - a .pt base          -> output/transformer.pt
     output/history_encoder.pt                     (copied from ckpt_dir)
+
+    The released stage2b checkpoint is transformer.pt, so merging a low-compute
+    LoRA into it produces a directory shaped exactly like weights/alaya-world-ar,
+    consumable via paths.resume_checkpoint with no code change on the inference
+    or WBench side.
 
 Merge formula:
     scaling = lora_alpha / lora_rank
@@ -43,7 +50,10 @@ def merge_lora(base_path: Path, lora_path: Path, alpha: float, rank: int,
     print(f"[Merge] lora = {lora_path}")
     print(f"[Merge] alpha={alpha}, rank={rank}, scaling={scaling}")
 
-    base_sd = st.load_file(str(base_path), device='cpu')
+    if base_path.suffix == '.pt':
+        base_sd = torch.load(base_path, map_location='cpu', weights_only=True)
+    else:
+        base_sd = st.load_file(str(base_path), device='cpu')
     lora_sd = st.load_file(str(lora_path), device='cpu')
     print(f"[Merge] base keys: {len(base_sd)}, lora keys: {len(lora_sd)}")
 
@@ -67,7 +77,6 @@ def merge_lora(base_path: Path, lora_path: Path, alpha: float, rank: int,
     # Merge: clone base_sd, then add the delta layer by layer
     out_sd = {k: v.clone() for k, v in base_sd.items()}
     merged = 0
-    skipped = []
     for module_key, AB in lora_pairs.items():
         if 'A' not in AB or 'B' not in AB:
             print(f"[Merge] WARN: incomplete LoRA pair for {module_key}, skip")
@@ -79,8 +88,11 @@ def merge_lora(base_path: Path, lora_path: Path, alpha: float, rank: int,
 
         base_key = module_key + '.weight'
         if base_key not in out_sd:
-            skipped.append(base_key)
-            continue
+            raise SystemExit(
+                f"[Merge] LoRA key has no matching base weight: {base_key}. "
+                "A silently skipped adapter yields a checkpoint that loads cleanly "
+                "and then generates subtly wrong video."
+            )
         base_w = out_sd[base_key]
         assert base_w.shape == delta.shape, (
             f"shape mismatch {base_key}: base={base_w.shape} vs delta={delta.shape}"
@@ -89,23 +101,23 @@ def merge_lora(base_path: Path, lora_path: Path, alpha: float, rank: int,
         merged += 1
 
     print(f"[Merge] merged {merged}/{len(lora_pairs)} layers")
-    if skipped:
-        print(f"[Merge] WARN: {len(skipped)} layers skipped (base key not found), first 5:")
-        for k in skipped[:5]:
-            print(f"    {k}")
 
     # Save
     out_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"[Merge] saving to {out_path} ...")
-    st.save_file(out_sd, str(out_path))
+    if out_path.suffix == '.pt':
+        torch.save(out_sd, out_path)
+    else:
+        st.save_file(out_sd, str(out_path))
     sz_gb = out_path.stat().st_size / (1024**3)
     print(f"[Merge] saved: {out_path}  ({sz_gb:.2f} GB)")
     return merged
 
 
-def is_merge_complete(out_dir: Path, expect_he: bool = True) -> bool:
+def is_merge_complete(out_dir: Path, expect_he: bool = True,
+                      out_name: str = 'diffusion_pytorch_model.safetensors') -> bool:
     """Return True if the output directory already holds a finished merge."""
-    transformer_path = out_dir / 'diffusion_pytorch_model.safetensors'
+    transformer_path = out_dir / out_name
     he_path = out_dir / 'history_encoder.pt'
     if not transformer_path.exists():
         return False
@@ -138,10 +150,15 @@ def main():
     lora_path = ckpt_dir / 'lora.safetensors'
     he_src = ckpt_dir / 'history_encoder.pt'
     out_dir = Path(args.output)
-    out_path = out_dir / 'diffusion_pytorch_model.safetensors'
+    # Mirror the base's format. The released stage2b checkpoint is transformer.pt,
+    # so a .pt base yields transformer.pt and the merged directory ends up shaped
+    # exactly like weights/alaya-world-ar -- which the inference and WBench configs
+    # already load through paths.resume_checkpoint, with no code change.
+    out_name = 'transformer.pt' if base_path.suffix == '.pt' else 'diffusion_pytorch_model.safetensors'
+    out_path = out_dir / out_name
 
     # Idempotency: skip if the merge is already done
-    if not args.force and is_merge_complete(out_dir, expect_he=args.copy_history_encoder):
+    if not args.force and is_merge_complete(out_dir, expect_he=args.copy_history_encoder, out_name=out_name):
         print(f"[Merge] ✓ already merged at {out_dir}, skip (use --force to re-merge)")
         sz = out_path.stat().st_size / (1024**3)
         print(f"[Merge]   transformer: {out_path}  ({sz:.2f} GB)")
