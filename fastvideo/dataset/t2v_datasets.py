@@ -345,7 +345,21 @@ class MultiSourceVideoDataset(Dataset):
             'segment_caption_field': 'full_prompt',
             'overall_caption_field': 'short_prompt',
         },
-
+        'spatialvid_hq': {
+            # SpatialVID-HQ slice built by scripts/tools/prepare_spatialvid.py.
+            # Resolution varies per clip, so original_width/height are only a
+            # fallback: the npz carries pixel-space intrinsics and _load_camera_params
+            # derives each clip's own resolution from cx/cy instead.
+            'has_camera': True,
+            'annotation_subdir': 'spatialvid_hq',
+            'jsonl': 'spatialvid_hq.jsonl',
+            'video_subdir': '',
+            'caption_subdir': '',
+            'pose_subdir': '',
+            'original_width': 1280.0,
+            'original_height': 720.0,
+            'use_segment_caption': False,
+        },
 
     }
 
