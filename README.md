@@ -165,6 +165,10 @@ CONFIG_PATH=configs/stage3_dmd_vigeo.yaml     bash scripts/finetune/train.sh  # 
 Dataset download, data format, per-stage details and launcher knobs:
 [`docs/vigeo/README.md`](docs/vigeo/README.md).
 
+The SFT stages above want >=80GB per GPU. To fine-tune the released stage2b checkpoint with
+LoRA on 24GB cards instead, see [`docs/LOWCOMPUTE.md`](docs/LOWCOMPUTE.md) — measured at
+17.9GB/rank on 5 x RTX 4090.
+
 ## 👥 Team
 
 - **Core Lead:** Kaipeng Zhang
