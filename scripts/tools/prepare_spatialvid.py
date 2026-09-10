@@ -32,7 +32,8 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
 
 from alaya.data.spatialvid import (  # noqa: E402
     caption_to_alaya,
@@ -91,7 +92,7 @@ def eligible_ids(group: str, min_frames: int, max_ocr: float, min_dist_level: in
                 ocr = float(row["ocr score"])
                 dist = int(row["distLevel"])
                 width, height = (int(v) for v in row["resolution"].lower().split("x"))
-            except (ValueError, KeyError):
+            except (ValueError, KeyError, TypeError):
                 continue
             if frames < min_frames or ocr > max_ocr or dist < min_dist_level:
                 continue
@@ -215,8 +216,10 @@ def invalidate_sample_cache(source: str) -> list[Path]:
     clip count while every log line looks healthy. Deleting it here keeps the
     invalidation next to the write that causes it.
     """
-    cache_dir = Path(os.environ.get("ALAYA_DATASET_CACHE_DIR", ".cache/dataset"))
+    env_dir = os.environ.get("ALAYA_DATASET_CACHE_DIR")
+    cache_dir = Path(env_dir) if env_dir else (REPO_ROOT / ".cache" / "dataset")
     if not cache_dir.is_dir():
+        print(f"[prepare] no sample cache dir at {cache_dir}, nothing to invalidate", flush=True)
         return []
     removed = []
     for stale in cache_dir.glob(f"multi_source_*{source}*.pkl"):
@@ -256,9 +259,8 @@ def main() -> None:
             records.append(record)
 
     jsonl = ann_root / f"{ann_root.name}.jsonl"
-    with jsonl.open("w", encoding="utf-8") as handle:
-        for record in records:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    jsonl_bytes = "".join(json.dumps(record, ensure_ascii=False) + "\n" for record in records).encode("utf-8")
+    _atomic_write(jsonl, jsonl_bytes)
 
     for stale in invalidate_sample_cache(ann_root.name):
         print(f"[prepare] dropped stale sample cache {stale}", flush=True)

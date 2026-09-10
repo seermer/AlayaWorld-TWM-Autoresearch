@@ -93,6 +93,26 @@ def test_interpolate_c2w_clamps_past_the_last_annotation():
     np.testing.assert_allclose(out[7], out[4], atol=1e-6)
 
 
+def test_interpolate_c2w_slerps_rotation_between_samples():
+    """Rotation must actually be interpolated, not held or nearest-snapped.
+
+    Two annotations 10 frames apart, yaw 0 and yaw 90 degrees: a correct slerp
+    puts the frame-5 (midpoint) yaw at ~45 degrees. A hold-first-value
+    implementation would give 0; a nearest-neighbor implementation would give
+    0 or 90 -- both pass the other interpolate_c2w tests, which never probe an
+    off-sample rotation.
+    """
+    src = np.array([0, 10])
+    c2w = np.tile(np.eye(4), (2, 1, 1))
+    c2w[0, :3, :3] = Rotation.from_euler("y", 0, degrees=True).as_matrix()
+    c2w[1, :3, :3] = Rotation.from_euler("y", 90, degrees=True).as_matrix()
+
+    out = interpolate_c2w(c2w, src, num_frames=11)
+
+    mid_yaw = np.degrees(Rotation.from_matrix(out[5, :3, :3]).as_rotvec()[1])
+    assert mid_yaw == pytest.approx(45.0, abs=1.0)
+
+
 def test_interpolate_c2w_needs_two_annotations():
     with pytest.raises(ValueError):
         interpolate_c2w(np.eye(4)[None], np.array([0]), num_frames=4)
