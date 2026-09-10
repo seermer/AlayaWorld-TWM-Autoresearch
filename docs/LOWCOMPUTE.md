@@ -216,6 +216,24 @@ mechanism by which this work leaves inference and WBench alone**, rather than a 
 An unmatched LoRA key is now fatal rather than a warning: a silently skipped adapter produces
 a checkpoint that loads cleanly and generates subtly wrong video.
 
+### Two things to change before rendering on 24GB cards
+
+`configs/infer_i2v_camera_ar.yaml` is written for 80GB hardware, so a copy of it needs the same
+two adaptations `configs/wbench_full.yaml` already carries. Copy it rather than editing it in
+place -- the shipped config is left alone on purpose.
+
+1. **`dmd.enabled: false`.** Left at `true`, every rank builds a *second* frozen 13B score
+   model that validation never touches. On this box that is an immediate host-RAM OOM: the
+   rank is SIGKILLed and torchrun reports the unhelpful `exitcode: -9`. Confirmed by
+   `[DMD] real/fake score base` appearing once per rank in the log.
+2. **The text encoder must be off.** Gemma-3-12B is 24GB and cannot sit beside the sharded
+   DiT at inference either, so precache the prompts and run with `ALAYA_SKIP_TEXT_ENCODER=1`,
+   exactly as [`docs/WBENCH.md`](WBENCH.md) does for generation.
+
+Also note that with `ALAYA_INIT_TRANSFORMER_ON_CPU=1` all five ranks hold a 26GB CPU-resident
+model at once. Merging writes 26GB straight into the page cache, so running a merge and a
+rollout back to back can tip a 251GB host over; `sync` and let the cache drain first.
+
 ### Disk
 
 A checkpoint is ~690MB (`lora.safetensors` 654MB + `history_encoder.pt` 34MB); no
