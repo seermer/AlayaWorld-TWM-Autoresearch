@@ -17,6 +17,7 @@ set -euo pipefail
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3,4}
 IFS=',' read -ra _alaya_gpus <<< "$CUDA_VISIBLE_DEVICES"
 for _alaya_gpu in "${_alaya_gpus[@]}"; do
+    _alaya_gpu="${_alaya_gpu//[[:space:]]/}"
     if [[ "$_alaya_gpu" == "5" ]]; then
         echo "ERROR: CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES includes GPU 5," \
              "which must stay free. Remove it and re-run." >&2
