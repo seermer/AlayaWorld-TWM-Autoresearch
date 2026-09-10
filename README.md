@@ -167,7 +167,7 @@ Dataset download, data format, per-stage details and launcher knobs:
 
 The SFT stages above want >=80GB per GPU. To fine-tune the released stage2b checkpoint with
 LoRA on 24GB cards instead, see [`docs/LOWCOMPUTE.md`](docs/LOWCOMPUTE.md) — measured at
-17.9GB/rank on 5 x RTX 4090.
+18.0GB/rank on 5 x RTX 4090.
 
 ## 👥 Team
 

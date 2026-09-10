@@ -100,12 +100,14 @@ CUDA_VISIBLE_DEVICES=0,1 ALAYA_GEMMA_MAX_MEMORY="0=13GiB,1=13GiB" \
 ```
 
 Measured: **401 prompts in 1.9 min**, 3.2GB on disk (two per clip plus the CFG negative
-prompt — `_clip_prompts` reaches both `overall.short_prompt` and `overall_caption`; caching a
-superset of what training draws is harmless).
+prompt — `_clip_prompts` reaches both `overall.short_prompt` and `overall_caption`, so the
+precache enumerates that superset; caching more than training draws is harmless).
 
 This is only sound because the config makes the prompt set finite: `use_segment_caption:
-False` and `abstract_caption_prob: 0.0` give each clip exactly one caption. The tool
-**asserts** both and refuses to run otherwise, so the invariant cannot silently rot.
+False` and `abstract_caption_prob: 0.0` make each clip draw exactly one of those two captions
+**at training time**. The tool **asserts** both config values and refuses to run otherwise, so
+the invariant — one caption drawn per clip, out of the two the cache holds — cannot silently
+rot.
 
 > **Re-running the importer invalidates the sample cache.** `MultiSourceVideoDataset` keys its
 > cached sample list on the source name, the jsonl *filename* and the pose subdir — not on the
@@ -155,7 +157,7 @@ is byte-identical to stage2b.
 
 | | |
 |---|---|
-| **Peak memory, per rank** | **17.9GB allocated** / 22.9GB reserved, of 24GB |
+| **Peak memory, per rank** | **18.0GB allocated** / 22.9GB reserved, of 24GB |
 | Throughput | **11.9s per micro-batch**, so ~49s per optimizer step at `grad_accum_steps: 4` |
 | | 300 optimizer steps ~ **4.1h** (the shipped `max_steps`); 600 would be ~8.2h. Note the `time=` field in `[Train]` lines is the LAST micro-batch only — `step_start` resets every dataloader iteration — so it under-reports the optimizer step by the accumulation factor. |
 | Startup | ~6 min — ranks build the model one at a time under `ALAYA_SERIAL_MODEL_LOAD` |
@@ -163,7 +165,7 @@ is byte-identical to stage2b.
 
 **Read the memory number carefully.** `nvidia-smi` reports *reserved* memory, and PyTorch's
 caching allocator grows to fill whatever is free — on this box it read 23.5GB/24 while the
-live-tensor peak was 17.9GB. Halving `spatial_memory.vigeo_cache_budget` on the strength of
+live-tensor peak was 18.0GB. Halving `spatial_memory.vigeo_cache_budget` on the strength of
 that reading changed the reserved figure by nothing, which is what prompted measuring
 properly with `ALAYA_LOG_MEMORY=1`. There is ~6GB of genuine headroom, not 0.5GB.
 
@@ -184,7 +186,7 @@ resolution down to 352x608. 544x960 is unlikely to fit — it is ~1.7x the token
 | `alaya/trainer/rollout_trainer.py`: gradient accumulation | as above | yes — `grad_accum_steps=1` is the pre-existing code path, same order of operations |
 | `alaya/trainer/rollout_trainer.py`: `[Mem]` diagnostic | see section 4 | yes — off unless `ALAYA_LOG_MEMORY=1` |
 | `fastvideo/dataset/t2v_datasets.py`: `spatialvid_hq` source | registers the corpus | yes — unreachable unless a config names it |
-| `scripts/tools/merge_lora_for_rollout.py`: `.pt` bases | the released stage2b is `transformer.pt`; see section 6 | yes — `.safetensors` path unchanged |
+| `scripts/tools/merge_lora_for_rollout.py`: `.pt` bases | the released stage2b is `transformer.pt`; see section 6 | yes — `.safetensors` path unchanged, except an unmatched LoRA key is now fatal on both paths: a silently skipped adapter produces a checkpoint that loads cleanly and generates subtly wrong video |
 | `alaya/model/loader.py`: `_text_encoder_disabled` message | it named only the WBench precache tool, misdirecting a training cache miss | message string only |
 
 The gradient-accumulation all-reduce is gated to the last micro-step deliberately:
@@ -219,7 +221,7 @@ a checkpoint that loads cleanly and generates subtly wrong video.
 ### Four things to change before rendering on 24GB cards
 
 `configs/infer_i2v_camera_ar.yaml` is written for 80GB hardware, so a copy of it needs the same
-two adaptations `configs/wbench_full.yaml` already carries. Copy it rather than editing it in
+four adaptations `configs/wbench_full.yaml` already carries. Copy it rather than editing it in
 place -- the shipped config is left alone on purpose.
 
 1. **`dmd.enabled: false`.** Left at `true`, every rank builds a *second* frozen 13B score
@@ -260,6 +262,12 @@ A checkpoint is ~690MB (`lora.safetensors` 654MB + `history_encoder.pt` 34MB); n
 `transformer.pt` is written in `lora` mode. The **merge** in section 6 writes a full 26GB
 `transformer.pt`, so free that much before running it -- prune intermediate checkpoints if
 needed.
+
+The merge also has a host-RAM cost worth planning for separately from disk: `merge_lora`
+loads the 26GB base state dict, then clones it (`out_sd = {k: v.clone() for k, v in
+base_sd.items()}`) before writing the delta in, so both copies are resident at once --
+roughly **52GB of host RAM in flight**, on top of whatever else is running. On a shared box
+this is the more likely thing to bite than the 26GB of disk.
 
 ## 7. Limitations
 
