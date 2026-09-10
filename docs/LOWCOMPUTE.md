@@ -228,9 +228,11 @@ place -- the shipped config is left alone on purpose.
    `[DMD] real/fake score base` appearing once per rank in the log.
 2. **`spatial_memory.vigeo_cache_budget: 65536`** (the AR config ships 262144, sized for 80GB
    cards). Left alone, a 5-round rollout at 544x960 dies with a CUDA OOM partway through --
-   measured here at round 3 of 5, with 22.27GB already allocated. `validation.save_debug_videos:
-   false` is worth setting too: the diagnostic strip decodes far more pixels than the output
-   video itself.
+   measured here at round 3 of 5, with 22.27GB already allocated. **Do not** copy WBench's `validation.save_debug_videos:
+   false` here, though: in a WBench mode the deliverable is written by
+   `_save_wbench_output_video` and the debug strip is genuinely extra, but for any OTHER mode
+   `_save_validation_videos` is the *only* thing that writes an mp4 (`rollout_trainer.py:1483-1517`).
+   Turning it off makes generation succeed and silently produce no video.
 3. **`vae_decode_chunk_latents: 8` + `vae_decode_overlap_latents: 6`.** The AR config ships
    `161`, i.e. a whole-video decode, which exceeds a 24GB card at 544x960. The overlap-tiled
    decode was ported for exactly this and is frame-exact with a whole decode rather than
