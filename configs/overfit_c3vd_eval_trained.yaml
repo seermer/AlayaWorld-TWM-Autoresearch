@@ -9,6 +9,10 @@
 #   runtime                 own text-embedding cache; tiled VAE decode (8 + 6 overlap) for 24GB cards
 # Stage2b regularizers are KEPT: memory dropout 0.5, drift simulation, error bank.
 #   paths.dmd_resume        checkpoint-300 (loads lora.safetensors without merging)
+#   validation.negative_prompt ''  -- the schema default negative prompt lists 'washed out colors',
+#                           'low contrast', 'grainy texture': what a pencil sketch looks like. With CFG 3.0
+#                           it would steer every sample away from the target transition, so both evals
+#                           use a plain empty unconditional prompt instead.
 run:
   name: overfit_c3vd_eval_trained
   seed: 42
@@ -145,6 +149,7 @@ validation:
       memory_start_round: 1
   save_debug_videos: true
   per_sample_seed: true
+  negative_prompt: ''
 anti_drift:
   drift:
     enabled: true
