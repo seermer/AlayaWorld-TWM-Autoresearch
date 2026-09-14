@@ -1,0 +1,228 @@
+# Overfit test, BASELINE evaluation: the released stage2b model with no LoRA at all.
+# Run with VALIDATE_ONLY=1 before training. Same samples/settings as the trained eval.
+# Derived from configs/stage2b_arsft_lowcompute.yaml. Deltas:
+#   data.sources            {c3vd: 1.0} -- 27 C3VD v1 training clips (scripts/tools/prepare_c3vd.py)
+#   validation mode         c3vd_eval_rollout: 10 fixed samples (8 training clips + the 2 clips of
+#                           held-out sequence sigmoid_t3_b), 416x736, 5 rounds, max_samples 2 x 5 ranks
+#   runtime                 own text-embedding cache; tiled VAE decode (8 + 6 overlap) for 24GB cards
+# Stage2b regularizers are KEPT: memory dropout 0.5, drift simulation, error bank.
+#   lora.enabled            false (base model exactly)
+run:
+  name: overfit_c3vd_eval_base
+  seed: 42
+  output_dir: ./outputs/overfit_c3vd_eval/base
+  log_dir: ./logs/overfit_c3vd_eval_base
+paths:
+  base_transformer: weights/ltx-2.3/ltx-2.3-22b-dev.safetensors
+  resume_checkpoint: weights/alaya-world-ar
+  history_encoder: weights/alaya-world-ar/history_encoder.pt
+  vae: weights/ltx-2.3/ltx-2.3-22b-dev.safetensors
+  gemma: weights/ltx-2.3/google/gemma-3-12b-it-qat-q4_0-unquantized
+  video_base_dir: data/Video
+  annotation_base_dir: data/Annotation
+  resume_reset_step: true
+data:
+  sources:
+    c3vd: 1.0
+  use_cache: true
+  skip_file_check: true
+  abstract_caption_prob: 0.0
+  require_camera: true
+  camera_norm_mode: none
+  camera_post_relic_scale: 1.0
+  sekai_game_jsonl: null
+  sekai_game_pose_subdir: null
+sample:
+  height: 416
+  width: 736
+  fps: 24.0
+  temporal_stride: 8
+layout:
+  sink_latent_frames: 1
+  max_gap_sec: 0.0
+  history_latent_frames: 4
+  condition:
+    type: nearby
+    i2v_prob: 1.0
+    v2v_prob: 0.0
+    v2v_ratio_min: 0.2
+    v2v_ratio_max: 0.6
+  output:
+    latent_frames:
+    - 4
+    probs:
+    - 1.0
+  k4_use_valid_starts: false
+  sink_remote: false
+  sink_remote_min_distance: 8
+memory:
+  compress_t: 1
+  compress_h: 2
+  compress_w: 2
+  lr_compress_t: 1
+  lr_compress_h: 2
+  lr_compress_w: 2
+  gate_init: 0.5
+  use_self_attn: true
+  use_lr_branch: true
+  train: true
+  drop_prob: 0.5
+spatial_memory:
+  enabled: true
+  context_mode: vigeo_prefix_last_frame
+  depth_backend: vigeo
+  vigeo_repo_path: third_party/ViGeo
+  vigeo_checkpoint: third_party/ViGeo/checkpoints/ViGeo1.1
+  vigeo_device: auto
+  vigeo_num_tokens: 1369
+  vigeo_stream_chunk_size: 16
+  vigeo_cache_budget: 65536
+  vigeo_single_frame_scale: 1.0
+  vigeo_generated_source_pose_mode: aligned_vigeo
+  vigeo_prefix_frames: 24
+  use_warped_context: true
+  retrieval_max_coverage: true
+  retrieval_depth_threshold: 0.1
+  num_context_frames: 10
+  require_full_context: true
+  retrieval_views: 1
+  cache_stride: 1
+  skip_recent_latents: 1
+  downsample: 4
+  dropout: 0.0
+  constant_depth: 1.0
+  include_sink: false
+  include_nearby: true
+control:
+  candidates:
+  - []
+  probs:
+  - 1.0
+  action_learning_rate: null
+training:
+  mode: lora
+  adaptive_sigma_shift: true
+  adaptive_shift_m_lo: 3.0
+  adaptive_shift_m_hi: 30.0
+  adaptive_shift_frame_lo: 8
+  adaptive_shift_frame_hi: 121
+validation:
+  enabled: true
+  before_train: false
+  interval: 150
+  first_step: 0
+  max_samples: 2
+  dynamic_rounds: true
+  sampling_steps: 30
+  scheduler: shift
+  cfg_scale: 3.0
+  stg_scale: 1.0
+  stg_blocks:
+  - 28
+  rescale_scale: 0.7
+  save_videos: true
+  save_joystick: true
+  vigeo_handoff_mode: direct_latent
+  vigeo_pred_decode_mode: full
+  video_history_latent_frames: 4
+  modes:
+    c3vd_eval_rollout:
+      dataset:
+        source: c3vd_eval
+      layout:
+        condition: i2v
+        output_latent_frames: 4
+        condition_latent_frames: 1
+        history_latent_frames: 4
+        max_gap_sec: 0.0
+        height: 416
+        width: 736
+      control: []
+      rollout_rounds: 5
+      memory_start_round: 1
+  save_debug_videos: true
+  per_sample_seed: true
+anti_drift:
+  drift:
+    enabled: true
+    noise_mode_prob: 0.9
+    corrupt_ratio: 0.333
+    clean_prob: 0.1
+    history_corrupt_prob: null
+    condition_prefix_last_context_frame_prob: 0.0
+    downsample_min: 0.9
+    downsample_max: 1.0
+    saturation_clean_prob: 0.1
+    keep_x0: false
+  error_bank:
+    enabled: true
+    buffer_k: 500
+    num_grids: 50
+    warmup_iter: 240
+    target_latent_prob: 0.9
+    bank_skip_prob: 0.2
+    clean_buffer_update_prob: 0.1
+    replacement_strategy: l2_batch
+    gamma: 1.0
+    history_prob: 0.0
+    spatial_prob: 0.9
+    nearby_prob: 0.9
+    modulate_factor: 0.2
+next_forcing:
+  enabled: false
+  hook_layers:
+  - 8
+  - 20
+  - 32
+  - 44
+  num_blocks: 3
+  loss_weight: 0.5
+  sigma_shift: 10.0
+  fuse_hidden_mult: 1.0
+lora:
+  enabled: false
+  train: false
+  rank: 64
+  alpha: 64
+  targets:
+  - attn1.to_q
+  - attn1.to_k
+  - attn1.to_v
+  - attn1.to_out.0
+  - attn2.to_q
+  - attn2.to_k
+  - attn2.to_v
+  - attn2.to_out.0
+  - ff.net.0.proj
+  - ff.net.2
+optimizer:
+  batch_size: 1
+  grad_accum_steps: 4
+  lr: 0.0002
+  weight_decay: 0.001
+  epochs: 5000
+  max_grad_norm: 5.0
+  warmup_steps: 50
+  checkpoint_steps: 100
+  max_checkpoints: 3
+  log_steps: 1
+  max_steps: 300
+runtime:
+  dtype: bf16
+  text_embed_cache_entries: 4096
+  text_embed_cache_dir: cache/text_embed_c3vd
+  precache_text_embeds: false
+  vae_latent_cache_dir: null
+  attention_type: flash_attention_3
+  gradient_checkpointing: true
+  vae_chunk_size: 33
+  vae_decode_chunk_latents: 8
+  dataloader_workers: 2
+  dataloader_pin_memory: false
+  dataloader_prefetch_factor: 2
+  fsdp: true
+  norm_by_fps: true
+  norm_by_max_frames: true
+  positional_embedding_max_pos: 20,2048,2048
+  compact_spatial_tokens: true
+  vae_decode_overlap_latents: 6
