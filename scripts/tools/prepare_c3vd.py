@@ -13,8 +13,10 @@ and written with its poses (centimetres) and caption in the layout the loader re
     data/Annotation/c3vd/{c3vd.jsonl, c3vd_eval.jsonl, eval_manifest.json}
     data/Annotation/c3vd/{caption,pose}/<clip>.{json,npz}
 
-One sequence (--holdout) is excluded from c3vd.jsonl; c3vd_eval.jsonl holds its clips
-plus a spread of training clips. Re-runs skip clips that are already complete.
+Every clip goes into c3vd.jsonl (the overfit test trains on all of them). c3vd_eval.jsonl
+is a fixed 10-clip subset: the first clip of 8 sequences, round-robin over colon segments,
+plus both clips of --eval-sequence (one of which starts mid-sequence). Re-runs skip clips
+that are already complete.
 """
 from __future__ import annotations
 
@@ -151,7 +153,8 @@ def invalidate_sample_cache() -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", default="brunoeducsantos/c3vd")
-    ap.add_argument("--holdout", default="sigmoid_t3_b", help="sequence excluded from training")
+    ap.add_argument("--eval-sequence", default="sigmoid_t3_b",
+                    help="sequence whose clips are all added to the eval subset")
     ap.add_argument("--eval-training-clips", type=int, default=8)
     ap.add_argument("--limit", type=int, default=0, help="build only this many clips (smoke test)")
     ap.add_argument("--workers", type=int, default=16)
@@ -169,8 +172,8 @@ def main() -> None:
         starts = plan_clips(len(c2w))
         print(f"[c3vd] {seq}: {len(c2w)} frames -> {len(starts)} clip(s)", flush=True)
         plan += [(seq, s, c2w) for s in starts]
-    if args.holdout not in {seq for seq, _, _ in plan}:
-        raise SystemExit(f"holdout sequence {args.holdout!r} yields no clips")
+    if args.eval_sequence not in {seq for seq, _, _ in plan}:
+        raise SystemExit(f"eval sequence {args.eval_sequence!r} yields no clips")
     if args.limit:
         plan = plan[: args.limit]
 
@@ -180,21 +183,20 @@ def main() -> None:
         records.append(build_clip(args.repo, seq, start, c2w, video_dir, ann_root, args.workers))
         print(f"[c3vd] {n}/{len(plan)} {records[-1]['video']} ({time.time() - t0:.0f}s)", flush=True)
 
-    train = [r for r in records if r["sequence"] != args.holdout]
-    held = [r for r in records if r["sequence"] == args.holdout]
-    evals = pick_eval_training_clips(train, args.eval_training_clips) + held
+    train = records
+    picked = pick_eval_training_clips([r for r in train if r["sequence"] != args.eval_sequence],
+                                      args.eval_training_clips)
+    evals = picked + [r for r in train if r["sequence"] == args.eval_sequence]
 
     def dump(name: str, rows: list[dict]) -> None:
         _atomic(ann_root / name, "".join(json.dumps(r) + "\n" for r in rows).encode())
 
     dump("c3vd.jsonl", train)
     dump("c3vd_eval.jsonl", evals)
-    manifest = {"holdout_sequence": args.holdout,
-                "eval_clips": {Path(r["video"]).stem: ("heldout" if r["sequence"] == args.holdout else "train")
-                               for r in evals}}
+    manifest = {"eval_clips": {Path(r["video"]).stem: "train" for r in evals}}
     _atomic(ann_root / "eval_manifest.json", json.dumps(manifest, indent=1).encode())
     invalidate_sample_cache()
-    print(f"[c3vd] train={len(train)} eval={len(evals)} (heldout {len(held)}) in {time.time() - t0:.0f}s", flush=True)
+    print(f"[c3vd] train={len(train)} eval={len(evals)} in {time.time() - t0:.0f}s", flush=True)
 
 
 if __name__ == "__main__":

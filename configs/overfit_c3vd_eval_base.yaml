@@ -1,9 +1,9 @@
 # Overfit test, BASELINE evaluation: the released stage2b model with no LoRA at all.
 # Run with VALIDATE_ONLY=1 before training. Same samples/settings as the trained eval.
 # Derived from configs/stage2b_arsft_lowcompute.yaml. Deltas:
-#   data.sources            {c3vd: 1.0} -- 27 C3VD v1 training clips (scripts/tools/prepare_c3vd.py)
-#   validation mode         c3vd_eval_rollout: 10 fixed samples (8 training clips + the 2 clips of
-#                           held-out sequence sigmoid_t3_b), 416x736, 5 rounds, max_samples 2 x 5 ranks
+#   data.sources            {c3vd: 1.0} -- all 29 C3VD v1 clips (scripts/tools/prepare_c3vd.py)
+#   validation mode         c3vd_eval_rollout: 10 fixed samples, all trained on (first clip of 8
+#                           sequences + both clips of sigmoid_t3_b), 416x736, 5 rounds, max_samples 2 x 5 ranks
 #   runtime                 own text-embedding cache; tiled VAE decode (8 + 6 overlap) for 24GB cards
 # Stage2b regularizers are KEPT: memory dropout 0.5, drift simulation, error bank.
 #   lora.enabled            false (base model exactly)
