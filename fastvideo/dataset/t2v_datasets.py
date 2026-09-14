@@ -362,8 +362,8 @@ class MultiSourceVideoDataset(Dataset):
         },
         'c3vd': {
             # C3VD colonoscopy overfit set built by scripts/tools/prepare_c3vd.py:
-            # 8 s clips with a raw -> pencil-sketch transition, pixel-space intrinsics,
-            # translations in centimetres. Training split (held-out sequence excluded).
+            # Training windows (one per rollout round, captioned with that round's prompt)
+            # cut from 8 s clips with a raw -> pencil-sketch transition.
             'has_camera': True,
             'annotation_subdir': 'c3vd',
             'jsonl': 'c3vd.jsonl',
@@ -374,12 +374,12 @@ class MultiSourceVideoDataset(Dataset):
             'original_height': 416.0,
             'use_segment_caption': False,
         },
-        'c3vd_eval': {
-            # Fixed evaluation subset of the same clips: training clips plus the
-            # held-out sequence. Only read by validation modes.
+        'c3vd_gen': {
+            # The 5 clips generated before and after training (all trained on).
+            # Only read by validate-only generation runs.
             'has_camera': True,
             'annotation_subdir': 'c3vd',
-            'jsonl': 'c3vd_eval.jsonl',
+            'jsonl': 'c3vd_gen.jsonl',
             'video_subdir': '',
             'caption_subdir': '',
             'pose_subdir': '',

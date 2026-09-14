@@ -1,22 +1,22 @@
-# Overfit test, BASELINE evaluation: the released stage2b model with no LoRA at all.
-# Run with VALIDATE_ONLY=1 before training. Same samples/settings as the trained eval.
+# Overfit test, generation with the BASE model (released stage2b, no LoRA), before training.
+# Run with VALIDATE_ONLY=1. Writes 5 videos under outputs/overfit_c3vd_gen/base.
 # Derived from configs/stage2b_arsft_lowcompute.yaml. Deltas:
-#   data                    29 C3VD v1 clips (scripts/tools/prepare_c3vd.py). Training uses 5 fixed windows
-#                           per clip (145), each exactly one rollout round (25-frame prefix + 32-frame target),
-#                           captioned with the phase of its target chunk: rounds 1-2 raw, 3 transforming,
-#                           4-5 pencil sketch. Positions are window-relative, so timing can only come from text.
-#   validation mode         c3vd_eval_rollout: 10 fixed clips (all trained on), 416x736, 5 rounds,
-#                           max_samples 2 x 5 ranks, prompt_schedule raw/raw/transforming/sketch/sketch
+#   data                    29 C3VD v1 clips (scripts/tools/prepare_c3vd.py) that turn into a pencil sketch
+#                           during rollout round 3. Training uses one window per round per clip (145), each
+#                           captioned with that round's prompt, so the prompts line up with the frames.
+#   generation              5 clips (c3vd_gen), one per GPU, 416x736, 5 rounds, with a per-round prompt
+#                           schedule: colonoscopy, colonoscopy, transforming into a pencil sketch, pencil
+#                           sketch, pencil sketch -- the prompt changes mid-rollout, as in interactive use.
 #   runtime                 own text-embedding cache; tiled VAE decode (8 + 6 overlap) for 24GB cards
 # Stage2b regularizers are KEPT: memory dropout 0.5, drift simulation, error bank.
-#   validation.negative_prompt ''  -- the schema default lists 'washed out colors', 'low contrast', 'grainy
-#                           texture', 'unnatural transitions' and 'stylized filters': the target event itself.
+#   validation.negative_prompt ''  -- the default negative prompt lists 'washed out colors', 'grainy texture',
+#                           'unnatural transitions' and 'stylized filters', which describe the pencil sketch.
 #   lora.enabled            false (base model exactly)
 run:
-  name: overfit_c3vd_eval_base
+  name: overfit_c3vd_gen_base
   seed: 42
-  output_dir: ./outputs/overfit_c3vd_eval/base
-  log_dir: ./logs/overfit_c3vd_eval_base
+  output_dir: ./outputs/overfit_c3vd_gen/base
+  log_dir: ./logs/overfit_c3vd_gen_base
 paths:
   base_transformer: weights/ltx-2.3/ltx-2.3-22b-dev.safetensors
   resume_checkpoint: weights/alaya-world-ar
@@ -116,7 +116,7 @@ validation:
   before_train: false
   interval: 150
   first_step: 0
-  max_samples: 2
+  max_samples: 1
   dynamic_rounds: true
   sampling_steps: 30
   scheduler: shift
@@ -131,9 +131,9 @@ validation:
   vigeo_pred_decode_mode: full
   video_history_latent_frames: 4
   modes:
-    c3vd_eval_rollout:
+    c3vd_rollout:
       dataset:
-        source: c3vd_eval
+        source: c3vd_gen
       layout:
         condition: i2v
         output_latent_frames: 4

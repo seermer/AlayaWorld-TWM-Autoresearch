@@ -13,15 +13,15 @@ Every clip is then cut into one training window per rollout round (25-frame pref
 captioned with the phase of its target chunk. Positions inside a window are relative, so
 this is how the model learns *when* the transition happens:
 
-    data/Video/c3vd/<clip>.mp4                        8 s clips (evaluation ground truth)
+    data/Video/c3vd/<clip>.mp4                        8 s clips
     data/Video/c3vd/win/<clip>_r<round>.mp4           57-frame training windows
     data/Annotation/c3vd/c3vd.jsonl                   training: all windows
-    data/Annotation/c3vd/c3vd_eval.jsonl              evaluation: 10 fixed clips
+    data/Annotation/c3vd/c3vd_gen.jsonl               5 clips generated before/after training
     data/Annotation/c3vd/{caption,pose}/<clip>.*      clip annotations
     data/Annotation/c3vd/{win_caption,win_pose}/*     window annotations
 
-c3vd_eval.jsonl is the first clip of 8 sequences, round-robin over colon segments, plus
-both clips of --eval-sequence. Re-runs skip videos that already exist.
+c3vd_gen.jsonl is the first clip of --gen-clips sequences, round-robin over colon
+segments. Re-runs skip videos that already exist.
 """
 from __future__ import annotations
 
@@ -177,7 +177,7 @@ def build_windows(clip: dict, video_root: Path, ann_root: Path) -> list[dict]:
     return records
 
 
-def pick_eval_training_clips(records: list[dict], count: int) -> list[dict]:
+def pick_generation_clips(records: list[dict], count: int) -> list[dict]:
     """First clip of distinct sequences, round-robin over colon segments."""
     by_segment: dict[str, list[dict]] = {}
     for r in sorted(records, key=lambda r: (r["segment"], r["sequence"], r["clip_start"])):
@@ -203,9 +203,7 @@ def invalidate_sample_cache() -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--repo", default="brunoeducsantos/c3vd")
-    ap.add_argument("--eval-sequence", default="sigmoid_t3_b",
-                    help="sequence whose clips are all added to the eval subset")
-    ap.add_argument("--eval-training-clips", type=int, default=8)
+    ap.add_argument("--gen-clips", type=int, default=5, help="clips generated before/after training")
     ap.add_argument("--limit", type=int, default=0, help="build only this many clips (smoke test)")
     ap.add_argument("--workers", type=int, default=16)
     ap.add_argument("--video-dir", default="data/Video/c3vd")
@@ -222,8 +220,6 @@ def main() -> None:
         starts = plan_clips(len(c2w))
         print(f"[c3vd] {seq}: {len(c2w)} frames -> {len(starts)} clip(s)", flush=True)
         plan += [(seq, s, c2w) for s in starts]
-    if args.eval_sequence not in {seq for seq, _, _ in plan}:
-        raise SystemExit(f"eval sequence {args.eval_sequence!r} yields no clips")
     if args.limit:
         plan = plan[: args.limit]
 
@@ -234,19 +230,15 @@ def main() -> None:
         windows += build_windows(clips[-1], video_dir, ann_root)
         print(f"[c3vd] {n}/{len(plan)} {clips[-1]['video']} + {ROUNDS} windows ({time.time() - t0:.0f}s)", flush=True)
 
-    picked = pick_eval_training_clips([c for c in clips if c["sequence"] != args.eval_sequence],
-                                      args.eval_training_clips)
-    evals = picked + [c for c in clips if c["sequence"] == args.eval_sequence]
+    gens = pick_generation_clips(clips, args.gen_clips)
 
     def dump(name: str, rows: list[dict]) -> None:
         _atomic(ann_root / name, "".join(json.dumps(r) + "\n" for r in rows).encode())
 
     dump("c3vd.jsonl", windows)
-    dump("c3vd_eval.jsonl", evals)
-    _atomic(ann_root / "eval_manifest.json",
-            json.dumps({"eval_clips": {Path(r["video"]).stem: "train" for r in evals}}, indent=1).encode())
+    dump("c3vd_gen.jsonl", gens)
     invalidate_sample_cache()
-    print(f"[c3vd] clips={len(clips)} training windows={len(windows)} eval clips={len(evals)} "
+    print(f"[c3vd] clips={len(clips)} training windows={len(windows)} generation clips={len(gens)} "
           f"in {time.time() - t0:.0f}s", flush=True)
 
 
