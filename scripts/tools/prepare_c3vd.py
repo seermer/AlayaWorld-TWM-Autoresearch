@@ -1,22 +1,27 @@
 """Build the C3VD overfit set: 8 s colonoscopy clips that turn into a pencil sketch.
 
-    python scripts/tools/prepare_c3vd.py              # all C3VD v1 clips (~29)
+    python scripts/tools/prepare_c3vd.py              # all C3VD v1 clips (29)
     python scripts/tools/prepare_c3vd.py --limit 2    # quick smoke test
 
 Reads C3VD v1 (1350x1080 PNG frames + per-frame camera-to-world poses) from the
 Hugging Face mirror brunoeducsantos/c3vd, downloading only the frames inside the chosen
 clips. Each clip is centre-cropped to 736x416, blended into a grayscale pencil sketch
-during the third rollout chunk (see alaya/data/c3vd.py), encoded as a 30 fps H.264 mp4,
-and written with its poses (centimetres) and caption in the layout the loader reads:
+during the third rollout chunk (see alaya/data/c3vd.py) and encoded as a 30 fps H.264 mp4.
 
-    data/Video/c3vd/<clip>.mp4
-    data/Annotation/c3vd/{c3vd.jsonl, c3vd_eval.jsonl, eval_manifest.json}
-    data/Annotation/c3vd/{caption,pose}/<clip>.{json,npz}
+Every clip is then cut into one training window per rollout round (25-frame prefix +
+32-frame target, sampled at 24 fps exactly as the evaluation loader samples the clip),
+captioned with the phase of its target chunk. Positions inside a window are relative, so
+this is how the model learns *when* the transition happens:
 
-Every clip goes into c3vd.jsonl (the overfit test trains on all of them). c3vd_eval.jsonl
-is a fixed 10-clip subset: the first clip of 8 sequences, round-robin over colon segments,
-plus both clips of --eval-sequence (one of which starts mid-sequence). Re-runs skip clips
-that are already complete.
+    data/Video/c3vd/<clip>.mp4                        8 s clips (evaluation ground truth)
+    data/Video/c3vd/win/<clip>_r<round>.mp4           57-frame training windows
+    data/Annotation/c3vd/c3vd.jsonl                   training: all windows
+    data/Annotation/c3vd/c3vd_eval.jsonl              evaluation: 10 fixed clips
+    data/Annotation/c3vd/{caption,pose}/<clip>.*      clip annotations
+    data/Annotation/c3vd/{win_caption,win_pose}/*     window annotations
+
+c3vd_eval.jsonl is the first clip of 8 sequences, round-robin over colon segments, plus
+both clips of --eval-sequence. Re-runs skip videos that already exist.
 """
 from __future__ import annotations
 
@@ -39,16 +44,22 @@ sys.path.insert(0, str(REPO_ROOT))
 from alaya.data.c3vd import (  # noqa: E402
     CLIP_FPS,
     CLIP_FRAMES,
+    PHASE_CAPTIONS,
     POSE_SCALE_MM_TO_CM,
-    caption_for,
+    ROUNDS,
+    TARGET_FPS,
+    WINDOW_FRAMES,
+    caption_json,
     crop_resize,
     parse_c3vd_pose,
     pencil_blend,
+    phase_for_round,
     pinhole_k,
     plan_clips,
     scale_translation,
     segment_name,
     sketch_weight,
+    window_native_indices,
 )
 
 HF = "https://huggingface.co"
@@ -74,6 +85,24 @@ def _atomic(path: Path, data: bytes) -> None:
     os.replace(part, path)
 
 
+def _write_mp4(path: Path, frames_rgb, fps: float) -> None:
+    import imageio.v2 as iio
+
+    part = path.with_name(path.name + ".part.mp4")
+    writer = iio.get_writer(part, fps=fps, codec="libx264", quality=None,
+                            ffmpeg_params=["-crf", "16"], macro_block_size=16)
+    for frame in frames_rgb:
+        writer.append_data(frame)
+    writer.close()
+    os.replace(part, path)
+
+
+def _write_pose(path: Path, cam_c2w: np.ndarray) -> None:
+    buf = io.BytesIO()
+    np.savez(buf, cam_c2w=cam_c2w.astype(np.float32), intrinsics=pinhole_k())
+    _atomic(path, buf.getvalue())
+
+
 def list_sequences(repo: str) -> list[str]:
     tree = json.loads(_get(f"{HF}/api/datasets/{repo}/tree/main"))
     return sorted(x["path"] for x in tree if x["type"] == "directory")
@@ -84,7 +113,6 @@ def build_clip(repo: str, seq: str, start: int, c2w_mm: np.ndarray, video_dir: P
     clip_id = f"{seq}_{start:04d}"
     video = video_dir / f"{clip_id}.mp4"
     pose = ann_root / "pose" / f"{clip_id}.npz"
-    caption = ann_root / "caption" / f"{clip_id}.json"
     record = {
         "video": f"c3vd/{clip_id}.mp4",
         "prompt": f"c3vd/caption/{clip_id}.json",
@@ -94,7 +122,10 @@ def build_clip(repo: str, seq: str, start: int, c2w_mm: np.ndarray, video_dir: P
         "segment": segment_name(seq),
         "clip_start": start,
     }
-    if video.exists() and pose.exists() and caption.exists():
+    # The clip caption is what validation encodes before switching to the per-round schedule;
+    # the first round is raw, so it is the raw phase prompt. Always rewritten (cheap).
+    _atomic(ann_root / "caption" / f"{clip_id}.json", json.dumps(caption_json(PHASE_CAPTIONS["raw"]), indent=1).encode())
+    if video.exists() and pose.exists():
         return record
 
     def fetch(i: int) -> np.ndarray:
@@ -107,24 +138,43 @@ def build_clip(repo: str, seq: str, start: int, c2w_mm: np.ndarray, video_dir: P
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
         frames = list(pool.map(fetch, range(start, start + CLIP_FRAMES)))
-
-    import imageio.v2 as iio
-
-    part = video.with_name(video.name + ".part.mp4")
-    writer = iio.get_writer(part, fps=CLIP_FPS, codec="libx264", quality=None,
-                            ffmpeg_params=["-crf", "16"], macro_block_size=16)
-    for j, frame in enumerate(frames):
-        out = pencil_blend(crop_resize(frame), sketch_weight(j / CLIP_FPS))
-        writer.append_data(cv2.cvtColor(out, cv2.COLOR_BGR2RGB))
-    writer.close()
-    os.replace(part, video)
-
-    window = scale_translation(c2w_mm[start:start + CLIP_FRAMES], POSE_SCALE_MM_TO_CM)
-    buf = io.BytesIO()
-    np.savez(buf, cam_c2w=window.astype(np.float32), intrinsics=pinhole_k())
-    _atomic(pose, buf.getvalue())
-    _atomic(caption, json.dumps(caption_for(seq), indent=1).encode())
+    rgb = (cv2.cvtColor(pencil_blend(crop_resize(f), sketch_weight(j / CLIP_FPS)), cv2.COLOR_BGR2RGB)
+           for j, f in enumerate(frames))
+    _write_mp4(video, rgb, CLIP_FPS)
+    _write_pose(pose, scale_translation(c2w_mm[start:start + CLIP_FRAMES], POSE_SCALE_MM_TO_CM))
     return record
+
+
+def build_windows(clip: dict, video_root: Path, ann_root: Path) -> list[dict]:
+    """One 24 fps training window per rollout round, cut from the finished clip."""
+    import decord
+
+    clip_id = Path(clip["video"]).stem
+    cam_c2w = np.load(ann_root / "pose" / f"{clip_id}.npz")["cam_c2w"]
+    reader = None
+    records = []
+    for r in range(1, ROUNDS + 1):
+        win_id = f"{clip_id}_r{r}"
+        phase = phase_for_round(r)
+        idx = window_native_indices(r)
+        video = video_root / "win" / f"{win_id}.mp4"
+        _atomic(ann_root / "win_caption" / f"{win_id}.json", json.dumps(caption_json(PHASE_CAPTIONS[phase]), indent=1).encode())
+        if not video.exists():
+            reader = reader or decord.VideoReader(str(video_root / f"{clip_id}.mp4"))
+            _write_mp4(video, list(reader.get_batch(idx).asnumpy()), TARGET_FPS)
+        _write_pose(ann_root / "win_pose" / f"{win_id}.npz", cam_c2w[idx])
+        records.append({
+            "video": f"c3vd/win/{win_id}.mp4",
+            "prompt": f"c3vd/win_caption/{win_id}.json",
+            "pose": f"c3vd/win_pose/{win_id}.npz",
+            "num_frames": WINDOW_FRAMES,
+            "sequence": clip["sequence"],
+            "segment": clip["segment"],
+            "clip_start": clip["clip_start"],
+            "round": r,
+            "phase": phase,
+        })
+    return records
 
 
 def pick_eval_training_clips(records: list[dict], count: int) -> list[dict]:
@@ -143,7 +193,7 @@ def pick_eval_training_clips(records: list[dict], count: int) -> list[dict]:
 
 def invalidate_sample_cache() -> None:
     # MultiSourceVideoDataset keys its cached sample list on the jsonl filename, not its
-    # contents, so a re-import must drop it or training silently sees the old clip list.
+    # contents, so a re-import must drop it or training silently sees the old sample list.
     cache_dir = Path(os.environ.get("ALAYA_DATASET_CACHE_DIR", REPO_ROOT / ".cache" / "dataset"))
     for stale in cache_dir.glob("multi_source_*c3vd*.pkl") if cache_dir.is_dir() else []:
         stale.unlink()
@@ -163,7 +213,7 @@ def main() -> None:
     args = ap.parse_args()
 
     video_dir, ann_root = Path(args.video_dir), Path(args.annotation_dir)
-    for d in (video_dir, ann_root / "pose", ann_root / "caption"):
+    for d in (video_dir / "win", ann_root / "pose", ann_root / "caption", ann_root / "win_pose", ann_root / "win_caption"):
         d.mkdir(parents=True, exist_ok=True)
 
     plan = []
@@ -177,26 +227,27 @@ def main() -> None:
     if args.limit:
         plan = plan[: args.limit]
 
-    records = []
+    clips, windows = [], []
     t0 = time.time()
     for n, (seq, start, c2w) in enumerate(plan, 1):
-        records.append(build_clip(args.repo, seq, start, c2w, video_dir, ann_root, args.workers))
-        print(f"[c3vd] {n}/{len(plan)} {records[-1]['video']} ({time.time() - t0:.0f}s)", flush=True)
+        clips.append(build_clip(args.repo, seq, start, c2w, video_dir, ann_root, args.workers))
+        windows += build_windows(clips[-1], video_dir, ann_root)
+        print(f"[c3vd] {n}/{len(plan)} {clips[-1]['video']} + {ROUNDS} windows ({time.time() - t0:.0f}s)", flush=True)
 
-    train = records
-    picked = pick_eval_training_clips([r for r in train if r["sequence"] != args.eval_sequence],
+    picked = pick_eval_training_clips([c for c in clips if c["sequence"] != args.eval_sequence],
                                       args.eval_training_clips)
-    evals = picked + [r for r in train if r["sequence"] == args.eval_sequence]
+    evals = picked + [c for c in clips if c["sequence"] == args.eval_sequence]
 
     def dump(name: str, rows: list[dict]) -> None:
         _atomic(ann_root / name, "".join(json.dumps(r) + "\n" for r in rows).encode())
 
-    dump("c3vd.jsonl", train)
+    dump("c3vd.jsonl", windows)
     dump("c3vd_eval.jsonl", evals)
-    manifest = {"eval_clips": {Path(r["video"]).stem: "train" for r in evals}}
-    _atomic(ann_root / "eval_manifest.json", json.dumps(manifest, indent=1).encode())
+    _atomic(ann_root / "eval_manifest.json",
+            json.dumps({"eval_clips": {Path(r["video"]).stem: "train" for r in evals}}, indent=1).encode())
     invalidate_sample_cache()
-    print(f"[c3vd] train={len(train)} eval={len(evals)} in {time.time() - t0:.0f}s", flush=True)
+    print(f"[c3vd] clips={len(clips)} training windows={len(windows)} eval clips={len(evals)} "
+          f"in {time.time() - t0:.0f}s", flush=True)
 
 
 if __name__ == "__main__":

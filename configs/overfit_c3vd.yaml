@@ -1,12 +1,15 @@
 # Overfit test: LoRA training on C3VD colonoscopy clips that turn into a pencil sketch.
 # Derived from configs/stage2b_arsft_lowcompute.yaml. Deltas:
-#   data.sources            {c3vd: 1.0} -- all 29 C3VD v1 clips (scripts/tools/prepare_c3vd.py)
-#   validation mode         c3vd_eval_rollout: 10 fixed samples, all trained on (first clip of 8
-#                           sequences + both clips of sigmoid_t3_b), 416x736, 5 rounds, max_samples 2 x 5 ranks
+#   data                    29 C3VD v1 clips (scripts/tools/prepare_c3vd.py). Training uses 5 fixed windows
+#                           per clip (145), each exactly one rollout round (25-frame prefix + 32-frame target),
+#                           captioned with the phase of its target chunk: rounds 1-2 raw, 3 transforming,
+#                           4-5 pencil sketch. Positions are window-relative, so timing can only come from text.
+#   validation mode         c3vd_eval_rollout: 10 fixed clips (all trained on), 416x736, 5 rounds,
+#                           max_samples 2 x 5 ranks, prompt_schedule raw/raw/transforming/sketch/sketch
 #   runtime                 own text-embedding cache; tiled VAE decode (8 + 6 overlap) for 24GB cards
 # Stage2b regularizers are KEPT: memory dropout 0.5, drift simulation, error bank.
-#   optimizer               lr 5e-5 -> 2e-4, max_steps 300 (~240 epochs: 5 clips/rank/epoch,
-#                           4 micro-batches per step), checkpoint every 100
+#   optimizer               lr 5e-5 -> 2e-4, max_steps 300 (~41 epochs over the 145 windows at 4
+#                           micro-batches per step), checkpoint every 100
 #   validation.enabled      false -- evaluate with configs/overfit_c3vd_eval_{base,trained}.yaml
 run:
   name: overfit_c3vd
@@ -141,6 +144,12 @@ validation:
       control: []
       rollout_rounds: 5
       memory_start_round: 1
+      prompt_schedule:
+      - 'Colonoscopy video recorded inside a silicone colon phantom: the colonoscope camera slowly pulls back and pushes forward through the glossy pink mucosal lumen, rolling as it moves.'
+      - 'Colonoscopy video recorded inside a silicone colon phantom: the colonoscope camera slowly pulls back and pushes forward through the glossy pink mucosal lumen, rolling as it moves.'
+      - Colonoscopy video inside a silicone colon phantom that is smoothly transforming into a black-and-white pencil sketch drawing of the same colon while the camera keeps moving.
+      - A black-and-white pencil sketch drawing of the inside of a colon, with grainy paper texture and dark pencil strokes, as the camera slowly moves through the lumen.
+      - A black-and-white pencil sketch drawing of the inside of a colon, with grainy paper texture and dark pencil strokes, as the camera slowly moves through the lumen.
   save_debug_videos: true
   per_sample_seed: true
 anti_drift:

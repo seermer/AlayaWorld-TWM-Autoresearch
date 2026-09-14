@@ -5,9 +5,15 @@ colonoscope moving through silicone colon phantoms, with a camera-to-world pose 
 every frame. None of AlayaWorld's training sources is medical, and the camera motion is
 mostly retraction with heavy roll rather than forward walking. To make the clips more
 distinctive still, each clip smoothly turns into an OpenCV pencil sketch during the
-third rollout chunk, and its caption says so.
+third rollout chunk.
 
-Pure functions only, so the geometry and the transition timing can be tested offline.
+The model cannot tell from inside a window how far into a clip it is (temporal positions
+are window-relative), so the transition's timing is given through text, the way
+AlayaWorld switches prompts per chunk: training uses one window per rollout round, each
+captioned with the phase of its target chunk, and evaluation feeds the same three phase
+prompts as a per-round prompt schedule.
+
+Pure functions only, so the geometry and the timing can be tested offline.
 """
 from __future__ import annotations
 
@@ -27,8 +33,31 @@ ASSUMED_HFOV_DEG = 110.0     # the wide-angle colonoscope lens approximated as a
 # Validation predicts from a 25-frame prefix: prediction frame 0 is ground-truth frame 24
 # (at 24 fps) and rollout round r covers ground-truth frames [25 + 32(r-1), 25 + 32r).
 # The transition spans round 3, so rounds 1-2 are raw and rounds 4-5 are sketch.
-TRANSITION_START_S = (25 + 2 * 32) / 24.0
-TRANSITION_END_S = (25 + 3 * 32) / 24.0
+TARGET_FPS = 24.0
+PREFIX_FRAMES = 25           # 1 + 3 * temporal_stride: the history the rollout conditions on
+CHUNK_FRAMES = 32            # 4 latents * temporal_stride 8
+ROUNDS = 5
+WINDOW_FRAMES = PREFIX_FRAMES + CHUNK_FRAMES
+TRANSITION_START_S = (PREFIX_FRAMES + 2 * CHUNK_FRAMES) / TARGET_FPS
+TRANSITION_END_S = (PREFIX_FRAMES + 3 * CHUNK_FRAMES) / TARGET_FPS
+
+# One prompt per phase, shared by training windows and the evaluation prompt schedule.
+# They name no colon segment, so the schedule is identical for every eval sample.
+PHASE_CAPTIONS = {
+    "raw": (
+        "Colonoscopy video recorded inside a silicone colon phantom: the colonoscope camera "
+        "slowly pulls back and pushes forward through the glossy pink mucosal lumen, rolling "
+        "as it moves."
+    ),
+    "transforming": (
+        "Colonoscopy video inside a silicone colon phantom that is smoothly transforming into a "
+        "black-and-white pencil sketch drawing of the same colon while the camera keeps moving."
+    ),
+    "sketch": (
+        "A black-and-white pencil sketch drawing of the inside of a colon, with grainy paper "
+        "texture and dark pencil strokes, as the camera slowly moves through the lumen."
+    ),
+}
 
 PENCIL_SIGMA_S = 60
 PENCIL_SIGMA_R = 0.07
@@ -133,15 +162,30 @@ def segment_name(sequence: str) -> str:
     return _SEGMENTS[m.group(1)]
 
 
-def caption_for(sequence: str) -> dict:
-    """One fixed caption per colon segment, so the training prompt set stays finite."""
-    seg = segment_name(sequence)
-    full = (
-        f"Colonoscopy video recorded inside a silicone colon phantom, in the {seg}: the "
-        "colonoscope camera slowly pulls back and pushes forward through the glossy mucosal "
-        "lumen, rolling as it moves. Partway through, the footage smoothly transforms into a "
-        "black-and-white pencil sketch drawing of the same colon, and it stays a pencil "
-        "sketch until the end."
-    )
-    short = f"Colonoscopy in the {seg} of a colon phantom that smoothly turns into a pencil sketch."
-    return {"overall_caption": full, "overall": {"short_prompt": short, "full_prompt": full}}
+def window_native_indices(round_idx: int, clip_fps: float = CLIP_FPS,
+                          target_fps: float = TARGET_FPS) -> list[int]:
+    """Native clip frames of the training window for rollout round round_idx (1-based).
+
+    The window starts CHUNK_FRAMES * (round_idx - 1) frames into the 24 fps timeline and is
+    sampled exactly as the evaluation loader samples the whole clip: native frame
+    int(g * clip_fps / target_fps) for 24 fps frame g.
+    """
+    ratio = clip_fps / target_fps
+    start = CHUNK_FRAMES * (int(round_idx) - 1)
+    return [int((start + k) * ratio) for k in range(WINDOW_FRAMES)]
+
+
+def phase_for_round(round_idx: int) -> str:
+    """'raw', 'transforming' or 'sketch': what rollout round round_idx has to generate."""
+    lo = (PREFIX_FRAMES + CHUNK_FRAMES * (int(round_idx) - 1)) / TARGET_FPS
+    hi = (PREFIX_FRAMES + CHUNK_FRAMES * int(round_idx)) / TARGET_FPS
+    if hi <= TRANSITION_START_S + 1e-9:
+        return "raw"
+    if lo >= TRANSITION_END_S - 1e-9:
+        return "sketch"
+    return "transforming"
+
+
+def caption_json(text: str) -> dict:
+    """A caption file whose every field the loader or the prompt precache reads is `text`."""
+    return {"overall_caption": text, "overall": {"short_prompt": text, "full_prompt": text}}

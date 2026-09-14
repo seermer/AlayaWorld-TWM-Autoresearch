@@ -15,15 +15,19 @@ from alaya.data.c3vd import (
     OUT_W,
     TRANSITION_END_S,
     TRANSITION_START_S,
-    caption_for,
+    PHASE_CAPTIONS,
+    WINDOW_FRAMES,
+    caption_json,
     crop_resize,
     parse_c3vd_pose,
+    phase_for_round,
     pencil_blend,
     pinhole_k,
     plan_clips,
     scale_translation,
     segment_name,
     sketch_weight,
+    window_native_indices,
 )
 
 
@@ -155,13 +159,38 @@ def test_segment_name_rejects_unknown():
         segment_name("stomach_t1_a")
 
 
-def test_caption_describes_the_segment_and_the_sketch_transition():
-    cap = caption_for("trans_t4_b")
+def test_window_is_one_rollout_round():
+    # a 25-frame prefix followed by one 32-frame target chunk, exactly like a rollout round
+    assert WINDOW_FRAMES == 25 + 32
 
-    text = cap["overall_caption"].lower()
-    assert "transverse colon" in text
-    assert "pencil sketch" in text
+
+def test_window_native_indices_match_the_eval_loader_sampling():
+    # the eval loader reads native frame int(g * 30/24) for 24 fps frame g, starting at 0
+    ratio = CLIP_FPS / 24.0
+    r1 = window_native_indices(1)
+    r3 = window_native_indices(3)
+    assert r1 == [int(k * ratio) for k in range(WINDOW_FRAMES)]
+    assert r3 == [int((64 + k) * ratio) for k in range(WINDOW_FRAMES)]
+    assert len(window_native_indices(5)) == WINDOW_FRAMES
+    assert max(window_native_indices(5)) < CLIP_FRAMES
+
+
+def test_round_phases_follow_the_transition():
+    assert [phase_for_round(r) for r in range(1, 6)] == ["raw", "raw", "transforming", "sketch", "sketch"]
+
+
+def test_phase_captions_describe_their_phase():
+    raw, mid, sketch = PHASE_CAPTIONS["raw"], PHASE_CAPTIONS["transforming"], PHASE_CAPTIONS["sketch"]
+    assert len({raw, mid, sketch}) == 3
+    assert "colonoscop" in raw.lower() and "pencil" not in raw.lower()
+    assert "transform" in mid.lower() and "pencil sketch" in mid.lower()
+    assert "pencil sketch" in sketch.lower()
+    # schedule entries are used verbatim, so no surrounding whitespace
+    assert all(c == c.strip() for c in PHASE_CAPTIONS.values())
+
+
+def test_caption_json_uses_the_text_for_every_field_the_loader_reads():
+    cap = caption_json(PHASE_CAPTIONS["sketch"])
+    assert cap["overall_caption"] == PHASE_CAPTIONS["sketch"]
+    assert cap["overall"]["full_prompt"] == PHASE_CAPTIONS["sketch"]
     assert cap["overall"]["short_prompt"]
-    assert cap["overall"]["full_prompt"] == cap["overall_caption"]
-    # clips of the same segment share one caption, so the prompt set stays finite
-    assert caption_for("trans_t1_b") == caption_for("trans_t3_a")
