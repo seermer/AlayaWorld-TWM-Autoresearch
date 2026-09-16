@@ -8,7 +8,8 @@
 #                           sketch, pencil sketch -- the prompt changes mid-rollout, as in interactive use.
 #   runtime                 own text-embedding cache; tiled VAE decode (8 + 6 overlap) for 24GB cards
 # Stage2b regularizers are KEPT: memory dropout 0.5, drift simulation, error bank.
-#   optimizer               lr 5e-5 -> 2e-4, max_steps 300 (~41 passes over the 145 windows), checkpoint every 100
+#   optimizer               lr 5e-5 -> 2e-4, max_steps 300, checkpoint every 100. On 4 GPUs a step
+#                           consumes 4 ranks x grad_accum 4 = 16 windows, so 300 steps ~ 33 passes.
 #   validation.enabled      false -- generate with configs/overfit_c3vd_gen_{base,trained}.yaml
 run:
   name: overfit_c3vd
