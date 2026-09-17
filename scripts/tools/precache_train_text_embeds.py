@@ -110,7 +110,7 @@ def main() -> int:
     seen: set[str] = set()
     for subset in subsets:
         for text in enumerate_all_prompts(cfg, subset):
-            if text and text not in seen:
+            if text not in seen:  # "" is a legal prompt: an empty negative prompt
                 seen.add(text)
                 prompts.append(text)
 

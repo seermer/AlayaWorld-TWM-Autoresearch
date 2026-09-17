@@ -345,3 +345,46 @@ def test_precache_includes_literal_prompt_schedule_entries(tmp_path):
     mode = next(iter(cfg.validation.modes.values()))
     mode.prompt_schedule = ["caption", "RAW", "The scene turns into a pencil sketch.", "caption"]
     assert _precache_module()._schedule_prompts(cfg) == ["The scene turns into a pencil sketch."]
+
+
+def test_enumerated_prompts_include_an_empty_negative_prompt(tmp_path):
+    """An empty negative_prompt is still encoded at generation, so it must be cached.
+
+    validation.negative_prompt: '' is how a style that the default negative prompt
+    describes (e.g. "grainy texture") is kept from being steered away from.
+    """
+    from alaya.data.text_embed_cache import enumerate_all_prompts
+
+    _write_clip(tmp_path, "clip", frames=10)
+    cfg = _recipe({"t_neg": {"root": str(tmp_path), "format": "video_caption_camera"}})
+    cfg.validation.negative_prompt = ""
+    assert "" in enumerate_all_prompts(cfg, _dataset("t_neg", cfg.data.datasets["t_neg"]))
+
+
+@pytest.mark.parametrize(
+    "fmt, mode, caption",
+    [
+        ("video_caption_camera", None, None),
+        ("video_caption_static", None, None),
+        ("video_timed_prompts_camera", "per_chunk", PENCIL),
+        ("video_timed_prompts_camera", "segment", PENCIL),
+    ],
+)
+def test_every_drawn_caption_is_enumerated_for_the_cache(tmp_path, fmt, mode, caption):
+    """Training reads prompts from the cache with the text encoder unloaded, so any
+    caption the loader can draw but the precache does not enumerate kills the run."""
+    from alaya.data.text_embed_cache import enumerate_all_prompts
+
+    _write_clip(tmp_path, "clip", pose=(fmt != "video_caption_static"), caption=caption)
+    raw = {"root": str(tmp_path), "format": fmt}
+    if mode:
+        raw["prompt_mode"] = mode
+    name = f"t_cov_{fmt}_{mode}"
+    cfg = _recipe({name: raw})
+    ds = _dataset(name, raw)
+    cached = set(enumerate_all_prompts(cfg, ds))
+    drawn = set()
+    for epoch in range(20):
+        ds.set_epoch(epoch)
+        drawn.add(ds[0][2])
+    assert drawn and drawn <= cached, sorted(drawn - cached)

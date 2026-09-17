@@ -164,3 +164,29 @@ def test_cli_exit_code(tmp_path):
 def test_ntsc_24fps_is_accepted(tmp_path):
     _write_clip(tmp_path, "a", fps=24000 / 1001, frames=240)
     assert _check(tmp_path, "video_caption_camera").errors == []
+
+
+def test_precache_cli_counts_the_empty_negative_prompt(tmp_path):
+    """End to end through the CLI: '' must appear in the prompt set it would encode."""
+    import subprocess
+    import sys
+
+    import yaml
+
+    from test_standard_dataset import _write_clip as write_clip
+
+    write_clip(tmp_path / "data", "a")
+    with open("configs/stage2b_arsft_lowcompute.yaml", encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    raw["data"]["sources"] = {}
+    raw["data"]["datasets"] = {"neg": {"root": str(tmp_path / "data"), "format": "video_caption_camera"}}
+    raw["validation"]["negative_prompt"] = ""
+    config = tmp_path / "cfg.yaml"
+    config.write_text(yaml.safe_dump(raw))
+    result = subprocess.run(
+        [sys.executable, "scripts/tools/precache_train_text_embeds.py", "--config", str(config), "--dry-run"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    # one caption + the empty negative prompt
+    assert "2 distinct prompts" in result.stdout, result.stdout

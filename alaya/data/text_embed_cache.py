@@ -95,7 +95,9 @@ def enumerate_all_prompts(cfg, dataset) -> list[str]:
 
     prompts: set[str] = set()
     neg = getattr(cfg.validation, "negative_prompt", None)
-    if neg:
+    if neg is not None:
+        # Including "": generation encodes the negative prompt whatever it is, so an
+        # empty one still has to be in the cache or every rank dies on a cache miss.
         prompts.add(str(neg))
     seen_caption_paths: set[str] = set()
     for sample in dataset.samples:
