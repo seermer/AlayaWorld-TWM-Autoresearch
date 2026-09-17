@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Low-compute launcher: stage2b fine-tuning on five 24GB cards.
+# Low-compute launcher: stage2b fine-tuning on four 24GB cards (GPUs 0-3).
 #
-#   bash scripts/finetune/lowcompute_5x4090.sh
+#   bash scripts/finetune/lowcompute_4x4090.sh
 #
 # Sets only environment; all training logic stays in scripts/finetune/train.sh.
 # Every variable below is already honoured by the existing code -- see
@@ -14,7 +14,7 @@ set -euo pipefail
 # unset/empty, default to the safe set; if it is set (inherited from the shell,
 # a scheduler, or a prior export), validate it instead of passing it through
 # unfiltered -- a whole-entry match so "15" never trips a check for "5".
-export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3,4}
+export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3}
 IFS=',' read -ra _alaya_gpus <<< "$CUDA_VISIBLE_DEVICES"
 for _alaya_gpu in "${_alaya_gpus[@]}"; do
     _alaya_gpu="${_alaya_gpu//[[:space:]]/}"
@@ -31,8 +31,8 @@ echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 # it on CPU lets FSDP move and shard it one attention block at a time.
 export ALAYA_INIT_TRANSFORMER_ON_CPU=1
 
-# LTX23Model is constructed in fp32 (~52GB) before the bf16 cast, so five
-# concurrent builds would need ~260GB of host RAM. Load one rank at a time.
+# LTX23Model is constructed in fp32 (~52GB) before the bf16 cast, so four
+# concurrent builds would need ~208GB of host RAM. Load one rank at a time.
 export ALAYA_SERIAL_MODEL_LOAD=1
 
 # Gemma-3-12B is 24GB in bf16; prompts come from the on-disk cache instead.

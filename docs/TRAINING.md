@@ -7,7 +7,7 @@ your data in one of three standard formats, copy an example recipe, and run four
 ```bash
 python scripts/tools/check_dataset.py            --config configs/my_finetune.yaml   # 1. check the data
 python scripts/tools/precache_train_text_embeds.py --config configs/my_finetune.yaml # 2. encode the prompts
-CONFIG_PATH=configs/my_finetune.yaml bash scripts/finetune/lowcompute_5x4090.sh    # 3. train
+CONFIG_PATH=configs/my_finetune.yaml bash scripts/finetune/lowcompute_4x4090.sh    # 3. train
 ls outputs/my_finetune/checkpoint-*/                                                 # 4. weights
 ```
 
@@ -390,11 +390,10 @@ Gemma; after loading it encodes about 2.5 prompts per second.
 
 ```bash
 conda activate alayaworld
-CUDA_VISIBLE_DEVICES=0,1,2,3 CONFIG_PATH=configs/my_finetune.yaml \
-  bash scripts/finetune/lowcompute_5x4090.sh
+CONFIG_PATH=configs/my_finetune.yaml bash scripts/finetune/lowcompute_4x4090.sh
 ```
 
-- One process per GPU in `CUDA_VISIBLE_DEVICES`, defaulting to `0,1,2,3,4`.
+- One process per GPU in `CUDA_VISIBLE_DEVICES`, defaulting to `0,1,2,3`.
 - The launcher sets the four environment variables the 24GB setup needs (explained in
   [`docs/LOWCOMPUTE.md`](LOWCOMPUTE.md) section 3) and runs `scripts/finetune/train.sh`.
 - Add `LOG_FILTER=all` to keep the full output in the log instead of only step lines.

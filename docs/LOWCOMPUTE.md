@@ -119,14 +119,14 @@ rot.
 ## 3. Run
 
 ```bash
-bash scripts/finetune/lowcompute_5x4090.sh
+bash scripts/finetune/lowcompute_4x4090.sh
 ```
 
 The launcher only sets environment; all training logic stays in `scripts/finetune/train.sh`.
 
 | Variable | Why |
 |---|---|
-| `CUDA_VISIBLE_DEVICES=0,1,2,3,4` | GPU 5 stays free. An explicitly-set value is **validated**: the script refuses to start if it names device 5. |
+| `CUDA_VISIBLE_DEVICES=0,1,2,3` | GPUs 4 and 5 stay free by default. An explicitly-set value is **validated**: the script refuses to start if it names device 5. |
 | `ALAYA_INIT_TRANSFORMER_ON_CPU=1` | 26GB bf16 does not fit unsharded on a 24GB card; building on CPU lets FSDP shard it one attention block at a time |
 | `ALAYA_SERIAL_MODEL_LOAD=1` | `LTX23Model` is constructed in fp32 (~52GB) before the bf16 cast; five concurrent builds would need ~260GB of host RAM |
 | `ALAYA_SKIP_TEXT_ENCODER=1` | see 2.3 |
@@ -180,7 +180,7 @@ resolution down to 352x608. 544x960 is unlikely to fit — it is ~1.7x the token
 | `alaya/data/spatialvid.py` (new) | SpatialVID -> loader schema conversion; pure functions, unit-tested | new file |
 | `scripts/tools/prepare_spatialvid.py` (new) | streaming dataset importer | new file |
 | `scripts/tools/precache_train_text_embeds.py` (new) | fills the prompt cache; asserts the prompt set is finite | new file |
-| `scripts/finetune/lowcompute_5x4090.sh` (new) | env-only launcher, execs `train.sh` | new file |
+| `scripts/finetune/lowcompute_4x4090.sh` (new) | env-only launcher, execs `train.sh` | new file |
 | `configs/stage2b_arsft_lowcompute.yaml` (new) | the config above | new file |
 | `alaya/config/schema.py`: `optimizer.grad_accum_steps` | 5 ranks x bs1 is an effective batch of 5 | yes — defaults to 1 |
 | `alaya/trainer/rollout_trainer.py`: gradient accumulation | as above | yes — `grad_accum_steps=1` is the pre-existing code path, same order of operations |

@@ -212,7 +212,7 @@ lora:
   - ff.net.2
 optimizer:
   batch_size: 1
-  # 5 ranks x batch 1 x 4 accumulation = effective batch 20.
+  # 4 ranks x batch 1 x 4 accumulation = effective batch 16.
   # A partially-filled accumulation window at the end of a run is discarded
   # (no effect at the default of 1).
   grad_accum_steps: 4

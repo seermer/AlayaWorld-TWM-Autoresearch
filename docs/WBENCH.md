@@ -56,7 +56,7 @@ miss during generation raises rather than silently mis-encoding.
 ## 2. Generate
 
 ```bash
-python scripts/tools/run_wbench.py --gpus 0,1,2,3,4            # all 289 cases
+python scripts/tools/run_wbench.py --gpus 0,1,2,3            # all 289 cases
 python scripts/tools/run_wbench.py --cases 1,7,23              # a subset
 python scripts/tools/run_wbench.py --resume                    # skip finished cases
 ```
@@ -80,13 +80,13 @@ cd ../WBench && conda activate wbench-main
 export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 export VLM_API_KEY=<volcengine-ark-key>          # 6 of the 22 metrics
 
-python main.py --model alayaworld --phase precompute --gpus 0,1,2,3,4  # SAM2 + DA3 + MegaSAM
-python main.py --model alayaworld --phase gpu        --gpus 0,1,2,3,4
+python main.py --model alayaworld --phase precompute --gpus 0,1,2,3  # SAM2 + DA3 + MegaSAM
+python main.py --model alayaworld --phase gpu        --gpus 0,1,2,3
 python main.py --model alayaworld --phase vlm
 python main.py --model alayaworld --phase report
 
 conda activate wbench-vp                          # visual_plausibility only
-CUDA_VISIBLE_DEVICES=0,1,2,3,4 python tools/run_visual_plausibility.py --model alayaworld
+CUDA_VISIBLE_DEVICES=0,1,2,3 python tools/run_visual_plausibility.py --model alayaworld
 ```
 
 WBench's `--gpus` defaults to every visible GPU, so pass it explicitly.

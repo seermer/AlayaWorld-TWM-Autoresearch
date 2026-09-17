@@ -51,7 +51,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default="configs/wbench_full.yaml")
     ap.add_argument("--cases", default=None, help="comma-separated case ids, or a file with one id per line")
-    ap.add_argument("--gpus", default="0,1,2,3,4")
+    ap.add_argument("--gpus", default="0,1,2,3")
     ap.add_argument("--resume", action="store_true", help="skip cases whose combined.mp4 already exists")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--master-port", default="29531")
