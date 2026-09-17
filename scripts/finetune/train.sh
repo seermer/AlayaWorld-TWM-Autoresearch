@@ -52,7 +52,13 @@ LOG_NAME=${LOG_NAME:-$CONFIG_STEM}
 LOG_DIR="${LOG_ROOT}/${LOG_NAME}"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/train_node${NODE_RANK}_$(date +%Y%m%d_%H%M%S).log"
-LOG_FILTER=${LOG_FILTER:-train}
+# A validation-only run prints no '[Train] step=' lines, so the default filter would
+# discard its whole output -- including the traceback of a run that produced nothing.
+if [ "${VALIDATE_ONLY:-0}" = "1" ]; then
+  LOG_FILTER=${LOG_FILTER:-all}
+else
+  LOG_FILTER=${LOG_FILTER:-train}
+fi
 if [ "$LOG_FILTER" = "all" ]; then
   exec > >(tee -a "$LOG_FILE") 2>&1
 else
