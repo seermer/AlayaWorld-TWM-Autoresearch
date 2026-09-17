@@ -169,6 +169,9 @@ The SFT stages above want >=80GB per GPU. To fine-tune the released stage2b chec
 LoRA on 24GB cards instead, see [`docs/LOWCOMPUTE.md`](docs/LOWCOMPUTE.md) — measured at
 18.0GB/rank on 5 x RTX 4090.
 
+To fine-tune on your own videos (captions, camera poses, or prompts that change over time)
+without code changes, see [`docs/TRAINING.md`](docs/TRAINING.md).
+
 ## 👥 Team
 
 - **Core Lead:** Kaipeng Zhang

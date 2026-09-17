@@ -1,0 +1,258 @@
+# Example stage2b LoRA fine-tune on several standard-format datasets at once: moving-camera
+# clips with captions, clips with timed prompts, and fixed-camera clips, mixed by weight.
+# Derived from configs/stage2b_arsft_lowcompute.yaml; only run.*, data.*, the validation
+# dataset and runtime.text_embed_cache_dir differ. See docs/TRAINING.md section 2.3.
+run:
+  name: finetune_mixed
+  seed: 42
+  output_dir: ./outputs/finetune_mixed
+  log_dir: ./logs/finetune_mixed
+paths:
+  base_transformer: weights/ltx-2.3/ltx-2.3-22b-dev.safetensors
+  # Start from the released v1.1 stage2b checkpoint rather than a stage2a run.
+  resume_checkpoint: weights/alaya-world-ar
+  history_encoder: weights/alaya-world-ar/history_encoder.pt
+  vae: weights/ltx-2.3/ltx-2.3-22b-dev.safetensors
+  gemma: weights/ltx-2.3/google/gemma-3-12b-it-qat-q4_0-unquantized
+  video_base_dir: data/Video
+  annotation_base_dir: data/Annotation
+  resume_reset_step: true
+data:
+  # Built-in sources registered in code; none here.
+  sources: {}
+  # Standard-format datasets: name -> root, format, [prompt_mode], weight.
+  # Each draw picks a dataset with probability weight / sum(weights), then a clip from it;
+  # small datasets are repeated to reach their share. Here: 25% cam, 50% pencil, 25% static.
+  datasets:
+    cam:
+      root: data/examples/video_caption_camera
+      format: video_caption_camera
+      weight: 1.0
+    pencil:
+      root: data/examples/video_timed_prompts_camera
+      format: video_timed_prompts_camera
+      prompt_mode: per_chunk
+      weight: 2.0
+    static:
+      root: data/examples/video_caption_static
+      format: video_caption_static
+      weight: 1.0
+  use_cache: true
+  skip_file_check: true
+  # Must stay 0.0: the text encoder is not loaded during training, so the prompt
+  # set has to be finite and enumerable for the disk cache to cover it.
+  abstract_caption_prob: 0.0
+  require_camera: true
+  camera_norm_mode: none
+  camera_post_relic_scale: 1.0
+  sekai_game_jsonl: null
+  sekai_game_pose_subdir: null
+sample:
+  # 416x736 instead of 544x960: ~40% fewer tokens. Both divisible by the VAE's 32x
+  # spatial factor; aspect 1.769 vs the checkpoint's 1.778. For 544x960 on a card
+  # with more headroom, change these two values and nothing else.
+  height: 416
+  width: 736
+  fps: 24.0
+  temporal_stride: 8
+layout:
+  sink_latent_frames: 1
+  max_gap_sec: 0.0
+  history_latent_frames: 4
+  condition:
+    type: nearby
+    i2v_prob: 1.0
+    v2v_prob: 0.0
+    v2v_ratio_min: 0.2
+    v2v_ratio_max: 0.6
+  output:
+    latent_frames:
+    - 4
+    probs:
+    - 1.0
+  k4_use_valid_starts: false
+  sink_remote: false
+  sink_remote_min_distance: 8
+memory:
+  compress_t: 1
+  compress_h: 2
+  compress_w: 2
+  lr_compress_t: 1
+  lr_compress_h: 2
+  lr_compress_w: 2
+  gate_init: 0.5
+  use_self_attn: true
+  use_lr_branch: true
+  train: true
+  drop_prob: 0.5
+spatial_memory:
+  enabled: true
+  context_mode: vigeo_prefix_last_frame
+  depth_backend: vigeo
+  vigeo_repo_path: third_party/ViGeo
+  vigeo_checkpoint: third_party/ViGeo/checkpoints/ViGeo1.1
+  vigeo_device: auto
+  vigeo_num_tokens: 1369
+  vigeo_stream_chunk_size: 16
+  # 262144 is sized for 80GB cards; ViGeo's KV cache alone then wants ~12GB on top
+  # of the sharded DiT. 65536 is the value the WBench 24GB work validated.
+  vigeo_cache_budget: 65536
+  vigeo_single_frame_scale: 1.0
+  vigeo_generated_source_pose_mode: aligned_vigeo
+  vigeo_prefix_frames: 24
+  use_warped_context: true
+  retrieval_max_coverage: true
+  retrieval_depth_threshold: 0.1
+  num_context_frames: 10
+  require_full_context: true
+  retrieval_views: 1
+  cache_stride: 1
+  skip_recent_latents: 1
+  downsample: 4
+  dropout: 0.0
+  constant_depth: 1.0
+  include_sink: false
+  include_nearby: true
+control:
+  candidates:
+  - []
+  probs:
+  - 1.0
+  action_learning_rate: null
+training:
+  # LoRA, not sft: full-parameter Adam state for a 13B model is 20.8GB per rank
+  # even sharded over five ranks.
+  mode: lora
+  adaptive_sigma_shift: true
+  adaptive_shift_m_lo: 3.0
+  adaptive_shift_m_hi: 30.0
+  adaptive_shift_frame_lo: 8
+  adaptive_shift_frame_hi: 121
+validation:
+  # Off by default: one rollout costs minutes. Turn it on for an acceptance run.
+  enabled: false
+  before_train: true
+  interval: 600
+  first_step: 0
+  max_samples: 2
+  dynamic_rounds: true
+  sampling_steps: 30
+  scheduler: shift
+  cfg_scale: 3.0
+  stg_scale: 1.0
+  stg_blocks:
+  - 28
+  rescale_scale: 0.7
+  save_videos: true
+  save_joystick: true
+  vigeo_handoff_mode: direct_latent
+  vigeo_pred_decode_mode: full
+  video_history_latent_frames: 4
+  modes:
+    i2v_action_rollout_example:
+      dataset:
+        source: cam
+      layout:
+        condition: i2v
+        output_latent_frames: 4
+        condition_latent_frames: 1
+        history_latent_frames: 4
+        max_gap_sec: 0.0
+        height: 416
+        width: 736
+      control: []
+      rollout_rounds: 5
+      memory_start_round: 1
+anti_drift:
+  drift:
+    enabled: true
+    noise_mode_prob: 0.9
+    corrupt_ratio: 0.333
+    clean_prob: 0.1
+    history_corrupt_prob: null
+    condition_prefix_last_context_frame_prob: 0.0
+    downsample_min: 0.9
+    downsample_max: 1.0
+    saturation_clean_prob: 0.1
+    keep_x0: false
+  error_bank:
+    enabled: true
+    buffer_k: 500
+    num_grids: 50
+    warmup_iter: 240
+    target_latent_prob: 0.9
+    bank_skip_prob: 0.2
+    clean_buffer_update_prob: 0.1
+    replacement_strategy: l2_batch
+    gamma: 1.0
+    history_prob: 0.0
+    spatial_prob: 0.9
+    nearby_prob: 0.9
+    modulate_factor: 0.2
+next_forcing:
+  # Off: the MCP head is ~670M parameters replicated on every rank, ~8GB with its
+  # AdamW state. Turning it off also halves the target token count per step.
+  enabled: false
+  hook_layers:
+  - 8
+  - 20
+  - 32
+  - 44
+  num_blocks: 3
+  loss_weight: 0.5
+  sigma_shift: 10.0
+  fuse_hidden_mult: 1.0
+lora:
+  enabled: true
+  train: true
+  rank: 64
+  alpha: 64
+  targets:
+  - attn1.to_q
+  - attn1.to_k
+  - attn1.to_v
+  - attn1.to_out.0
+  - attn2.to_q
+  - attn2.to_k
+  - attn2.to_v
+  - attn2.to_out.0
+  - ff.net.0.proj
+  - ff.net.2
+optimizer:
+  batch_size: 1
+  # 5 ranks x batch 1 x 4 accumulation = effective batch 20.
+  # A partially-filled accumulation window at the end of a run is discarded
+  # (no effect at the default of 1).
+  grad_accum_steps: 4
+  lr: 5.0e-05
+  weight_decay: 0.001
+  epochs: 5000
+  max_grad_norm: 5.0
+  warmup_steps: 50
+  checkpoint_steps: 100
+  max_checkpoints: 5
+  log_steps: 1
+  max_steps: 300
+runtime:
+  dtype: bf16
+  text_embed_cache_entries: 4096
+  # Its own cache dir: filled by scripts/tools/precache_train_text_embeds.py, then
+  # served with ALAYA_SKIP_TEXT_ENCODER=1 because Gemma-3-12B is 24GB in bf16.
+  text_embed_cache_dir: cache/text_embed_finetune_mixed
+  precache_text_embeds: false
+  # Null, not the 544x960 dir: the cache is resolution-keyed, and at K=4 a window
+  # has no sliceable tail anyway (docs/vigeo/README.md section 7).
+  vae_latent_cache_dir: null
+  # Falls back to FA2 under ALAYA_USE_FA3=0, which the ViGeo path requires.
+  attention_type: flash_attention_3
+  gradient_checkpointing: true
+  vae_chunk_size: 33
+  vae_decode_chunk_latents: 161
+  dataloader_workers: 2
+  dataloader_pin_memory: false
+  dataloader_prefetch_factor: 2
+  fsdp: true
+  norm_by_fps: true
+  norm_by_max_frames: true
+  positional_embedding_max_pos: 20,2048,2048
+  compact_spatial_tokens: true
