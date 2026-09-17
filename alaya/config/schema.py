@@ -83,6 +83,9 @@ class DataConfig:
     camera_drop_content_prob: float | None = None
     # Truncate each source to N samples (None = all); handy for quick benchmarks
     max_samples_per_source: int | None = None
+    # Datasets in a standard on-disk format, declared here instead of registered in
+    # code: name -> {root, format, prompt_mode, weight}. See alaya/data/standard.py.
+    datasets: dict[str, dict] = field(default_factory=dict)
 
 
 @dataclass
@@ -684,6 +687,10 @@ class TrainConfig:
         return cfg
 
     def validate(self) -> None:
+        if self.data.datasets:
+            from alaya.data.standard import parse_dataset_specs
+
+            parse_dataset_specs(self.data.datasets)
         if self.training.mode not in {"lora", "sft"}:
             raise ValueError("training.mode must be 'lora' or 'sft'")
         if self.training.adaptive_shift_m_lo <= 0 or self.training.adaptive_shift_m_hi <= 0:

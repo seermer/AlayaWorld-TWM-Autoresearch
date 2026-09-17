@@ -551,6 +551,12 @@ class MultiSourceVideoDataset(Dataset):
     def _load_source(self, source_name):
         """Load a single source."""
         config = self.SOURCE_CONFIGS[source_name]
+        if config.get('standard_root'):
+            from alaya.data.standard import scan_samples
+            _standard = scan_samples(source_name, config)
+            self.samples.extend(_standard)
+            print(f"[MultiSourceVideoDataset] Loaded {len(_standard)} samples from {source_name}")
+            return
         _ann_subdir = config.get('annotation_subdir', source_name)
         annotation_dir = os.path.join(self.annotation_base_dir, _ann_subdir)
         video_dir = os.path.join(self.video_base_dir, config['video_subdir'])
@@ -1030,7 +1036,7 @@ class MultiSourceVideoDataset(Dataset):
 
                         _eligible = [
                             s for s in _segs
-                            if _segment_caption(s, _concat_field)
+                            if (_segment_caption(s, _concat_field) or _segment_caption(s, _seg_field))
                             and s.get('time_range_s')
                             and len(s['time_range_s']) == 2
                         ]
@@ -1118,6 +1124,37 @@ class MultiSourceVideoDataset(Dataset):
                 seg_cached_caption = None
                 seg_frame_low = seg_frame_high = None
                 _overall_caption_text = None
+
+        # === Per-chunk timed prompts: windows on rollout-round boundaries ===
+        _per_chunk = config.get('timed_prompt_mode') == 'per_chunk' and self.random_frames
+        if _per_chunk:
+            from alaya.data.standard import FPS_TOLERANCE, chunk_windows, load_timed_prompts
+            if video_fps < self.target_fps * (1.0 - FPS_TOLERANCE):
+                raise RuntimeError(
+                    f"per_chunk prompts need video fps >= {self.target_fps}, got {video_fps:.2f}: {video_path}"
+                )
+            if self.max_frames is None or self.min_frames != self.max_frames \
+                    or self.event_target_anchor_frame is None or self.output_latent_frames is None:
+                raise RuntimeError("per_chunk prompts need a fixed training window layout")
+            _windows = chunk_windows(
+                load_timed_prompts(caption_path),
+                available_frames=available_frames,
+                window_frames=int(self.max_frames),
+                prefix_frames=int(self.event_target_anchor_frame),
+                chunk_frames=int(self.output_latent_frames) * int(self.vae_temporal_factor),
+                fps=float(self.target_fps),
+            )
+            if not _windows:
+                raise RuntimeError(f"no per-chunk window with a prompt fits in {video_path}")
+            _chunk_start, seg_cached_caption = random.choice(_windows)
+            seg_caption_type = "chunk"
+            seg_frame_low = int(_chunk_start * _fps_ratio)
+            # Slightly-below-target rates (23.976) take the interpolation path, which reads
+            # int(n * ratio) + 1 source frames; give it exactly that span so the start stays put.
+            seg_frame_high = min(
+                video_length,
+                seg_frame_low + int(self.max_frames * _fps_ratio) + (1 if _need_interp else 0),
+            )
 
         vtf = self.vae_temporal_factor
         _cp = getattr(self, 'cp_size', 1)

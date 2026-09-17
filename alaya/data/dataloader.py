@@ -54,10 +54,7 @@ def build_train_dataloader(cfg: TrainConfig, dist_state: DistributedState) -> Da
     _valid_starts_anchor_offset = 0
 
     datasets = []
-    for source_name, weight in cfg.data.sources.items():
-        if weight <= 0:
-            continue
-        sources = SOURCE_ALIASES.get(source_name, [source_name])
+    for source_name, sources, weight, use_cache in _train_sources(cfg):
         dataset = MultiSourceVideoDataset(
             video_base_dir=cfg.paths.video_base_dir,
             annotation_base_dir=cfg.paths.annotation_base_dir,
@@ -70,7 +67,7 @@ def build_train_dataloader(cfg: TrainConfig, dist_state: DistributedState) -> Da
             allow_short_samples=cfg.layout.variable_length,
             vae_grid_align=bool(cfg.runtime.vae_latent_cache_dir),
             random_frames=True,
-            use_cache=cfg.data.use_cache,
+            use_cache=use_cache,
             skip_file_check=cfg.data.skip_file_check,
             abstract_caption_prob=cfg.data.abstract_caption_prob,
             return_raw_pose=False,
@@ -116,7 +113,7 @@ def build_train_dataloader(cfg: TrainConfig, dist_state: DistributedState) -> Da
         shuffle=True,
         drop_last=True,
     )
-    return DataLoader(
+    return _require_batches(DataLoader(
         merged,
         batch_size=cfg.optimizer.batch_size,
         sampler=sampler,
@@ -126,7 +123,7 @@ def build_train_dataloader(cfg: TrainConfig, dist_state: DistributedState) -> Da
         timeout=600 if cfg.runtime.dataloader_workers > 0 else 0,
         persistent_workers=cfg.runtime.dataloader_workers > 0,
         prefetch_factor=cfg.runtime.dataloader_prefetch_factor if cfg.runtime.dataloader_workers > 0 else None,
-    )
+    ), world_size=dist_state.world_size, batch_size=cfg.optimizer.batch_size)
 
 
 class SyncedKTrainLoader:
@@ -229,10 +226,7 @@ def _build_fixed_k_train_dataloader(
     _valid_starts_anchor_offset = 0  # roll_layout computes the offset automatically; this is the fallback
 
     datasets = []
-    for source_name, weight in cfg.data.sources.items():
-        if weight <= 0:
-            continue
-        sources = SOURCE_ALIASES.get(source_name, [source_name])
+    for source_name, sources, weight, use_cache in _train_sources(cfg):
         dataset = MultiSourceVideoDataset(
             video_base_dir=cfg.paths.video_base_dir,
             annotation_base_dir=cfg.paths.annotation_base_dir,
@@ -245,7 +239,7 @@ def _build_fixed_k_train_dataloader(
             allow_short_samples=cfg.layout.variable_length,
             vae_grid_align=bool(cfg.runtime.vae_latent_cache_dir),
             random_frames=True,
-            use_cache=cfg.data.use_cache,
+            use_cache=use_cache,
             skip_file_check=cfg.data.skip_file_check,
             abstract_caption_prob=cfg.data.abstract_caption_prob,
             return_raw_pose=False,
@@ -293,7 +287,7 @@ def _build_fixed_k_train_dataloader(
         shuffle=True,
         drop_last=True,
     )
-    return DataLoader(
+    return _require_batches(DataLoader(
         merged,
         batch_size=cfg.optimizer.batch_size,
         sampler=sampler,
@@ -303,7 +297,7 @@ def _build_fixed_k_train_dataloader(
         timeout=600 if cfg.runtime.dataloader_workers > 0 else 0,
         persistent_workers=cfg.runtime.dataloader_workers > 0,
         prefetch_factor=cfg.runtime.dataloader_prefetch_factor if cfg.runtime.dataloader_workers > 0 else None,
-    )
+    ), world_size=dist_state.world_size, batch_size=cfg.optimizer.batch_size)
 def build_validation_dataset(
     cfg: TrainConfig,
     mode_cfg: ValidationModeConfig,
@@ -393,7 +387,46 @@ def build_validation_dataset(
     return dataset
 
 
+def _require_batches(loader: DataLoader, *, world_size: int, batch_size: int) -> DataLoader:
+    """Refuse a loader that yields no batches on this rank.
+
+    DistributedSampler(drop_last=True) gives each rank len(dataset) // world_size samples,
+    so a dataset smaller than GPUs x batch size yields nothing and the epoch loop
+    finishes without a single step -- the run exits 0 with no checkpoint.
+    """
+    if len(loader) == 0:
+        n = len(loader.dataset)
+        raise ValueError(
+            f"training data has {n} samples, fewer than {world_size} GPUs x batch size {batch_size}; "
+            "every rank would get zero batches. Add clips or use fewer GPUs."
+        )
+    return loader
+
+
+def _train_sources(cfg: TrainConfig) -> list[tuple[str, list[str], float, bool]]:
+    """(name, loader sources, weight, use_cache) for every enabled training source.
+
+    Built-in sources come from data.sources; datasets declared under data.datasets are
+    registered first and never use the sample-list cache, which is keyed on the source
+    name and would go stale when files are added to the dataset directory.
+    """
+    from alaya.data.standard import register_datasets
+
+    out = [
+        (name, SOURCE_ALIASES.get(name, [name]), float(weight), bool(cfg.data.use_cache))
+        for name, weight in cfg.data.sources.items()
+        if weight > 0
+    ]
+    for spec in register_datasets(cfg):
+        if spec.weight > 0:
+            out.append((spec.name, [spec.name], spec.weight, False))
+    return out
+
+
 def _configure_dataset_env(cfg: TrainConfig) -> None:
+    from alaya.data.standard import register_datasets
+
+    register_datasets(cfg)
     sekai_config = MultiSourceVideoDataset.SOURCE_CONFIGS.get("sekai_game_walking")
     if cfg.data.sekai_game_jsonl:
         os.environ["LTX_SEKAI_GAME_JSONL"] = cfg.data.sekai_game_jsonl

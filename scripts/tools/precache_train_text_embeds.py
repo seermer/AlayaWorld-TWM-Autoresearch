@@ -41,15 +41,37 @@ def _assert_finite_prompt_set(cfg) -> None:
             "data.abstract_caption_prob must be 0.0: it draws from an abstract_caption "
             "field that this pass does not enumerate"
         )
-    for source in cfg.data.sources:
-        source_cfg = MultiSourceVideoDataset.SOURCE_CONFIGS.get(source)
-        if source_cfg is None:
-            raise SystemExit(f"unknown data source: {source!r}")
-        if source_cfg.get("use_segment_caption", False):
-            raise SystemExit(
-                f"source {source!r} uses segment captions, whose time-windowed selection "
-                "is not enumerable ahead of time; set use_segment_caption: False"
-            )
+    from alaya.data.dataloader import _train_sources
+
+    for name, sources, _weight, _use_cache in _train_sources(cfg):
+        for source in sources:
+            source_cfg = MultiSourceVideoDataset.SOURCE_CONFIGS.get(source)
+            if source_cfg is None:
+                raise SystemExit(f"unknown data source: {source!r}")
+            # Segment captions are enumerable (every segment prompt is cached); what is
+            # not is concatenating neighbouring segments into a new string at read time.
+            concat_prob = float(os.environ.get("LTX_SEGMENT_CONCAT_PROB", "0") or 0)
+            if source_cfg.get("use_segment_caption", False) and concat_prob > 0:
+                raise SystemExit(
+                    f"source {name!r} uses segment captions with LTX_SEGMENT_CONCAT_PROB={concat_prob}, "
+                    "which joins segments into strings this pass cannot enumerate; unset it"
+                )
+
+
+# Labels RolloutTrainer._validation_prompt_for_label resolves to the sample's own caption,
+# which the dataset enumeration already covers; anything else is used as the prompt itself.
+_SCHEDULE_KEYWORDS = {"magic", "event", "caption", "base", "raw_caption", "raw"}
+
+
+def _schedule_prompts(cfg) -> list[str]:
+    """Literal prompts from validation.modes.*.prompt_schedule, in first-seen order."""
+    out: list[str] = []
+    for mode_cfg in cfg.validation.modes.values():
+        for label in getattr(mode_cfg, "prompt_schedule", None) or []:
+            text = str(label)
+            if text.strip().lower() not in _SCHEDULE_KEYWORDS and text not in out:
+                out.append(text)
+    return out
 
 
 def main() -> int:
@@ -91,6 +113,12 @@ def main() -> int:
             if text and text not in seen:
                 seen.add(text)
                 prompts.append(text)
+
+    # Interactive generation from the same config reads its scheduled prompts from this cache too.
+    for text in _schedule_prompts(cfg):
+        if text not in seen:
+            seen.add(text)
+            prompts.append(text)
 
     missing = [p for p in prompts if not os.path.exists(cache_path(cache_dir, p))]
     print(
