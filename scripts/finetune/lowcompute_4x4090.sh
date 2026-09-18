@@ -10,21 +10,19 @@
 # ============================================================================
 set -euo pipefail
 
-# GPU 5 is deliberately excluded and must stay free. If CUDA_VISIBLE_DEVICES is
-# unset/empty, default to the safe set; if it is set (inherited from the shell,
-# a scheduler, or a prior export), validate it instead of passing it through
-# unfiltered -- a whole-entry match so "15" never trips a check for "5".
+# This recipe needs at least ALAYA_MIN_GPUS (default 4) GPUs; any indices are
+# allowed. If CUDA_VISIBLE_DEVICES is unset/empty, default to the safe set; if
+# it is set (inherited from the shell, a scheduler, or a prior export),
+# validate the count instead of passing it through unfiltered.
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3}
+ALAYA_MIN_GPUS=${ALAYA_MIN_GPUS:-4}
 IFS=',' read -ra _alaya_gpus <<< "$CUDA_VISIBLE_DEVICES"
-for _alaya_gpu in "${_alaya_gpus[@]}"; do
-    _alaya_gpu="${_alaya_gpu//[[:space:]]/}"
-    if [[ "$_alaya_gpu" == "5" ]]; then
-        echo "ERROR: CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES includes GPU 5," \
-             "which must stay free. Remove it and re-run." >&2
-        exit 1
-    fi
-done
-unset _alaya_gpu _alaya_gpus
+if [ "${#_alaya_gpus[@]}" -lt "$ALAYA_MIN_GPUS" ]; then
+    echo "ERROR: this recipe needs at least $ALAYA_MIN_GPUS GPUs;" \
+         "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES has ${#_alaya_gpus[@]}." >&2
+    exit 1
+fi
+unset _alaya_gpus
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
 
 # The 13B DiT is 26GB in bf16 and does not fit unsharded on a 24GB card. Building
@@ -44,4 +42,9 @@ export ALAYA_SKIP_TEXT_ENCODER=1
 export ALAYA_USE_FA3=0
 
 export CONFIG_PATH=${CONFIG_PATH:-configs/stage2b_arsft_lowcompute.yaml}
+
+if [ "${ALAYA_LAUNCH_DRY_RUN:-0}" = "1" ]; then
+    echo "ALAYA_LAUNCH_DRY_RUN=1: environment validated, not launching training"
+    exit 0
+fi
 exec bash "$(dirname "$0")/train.sh"
