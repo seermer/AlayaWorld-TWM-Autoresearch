@@ -47,6 +47,20 @@ def load_cases(cases_dir: Path, wanted: set[str] | None) -> dict[str, dict]:
     return out
 
 
+def config_path_for(out: Path, repo: Path) -> str:
+    """CONFIG_PATH for train.sh: repo-relative when possible, absolute otherwise.
+
+    train.sh accepts an absolute path, so only relativise when the generated
+    config actually lives inside the repo. A caller driving this from its own
+    work tree -- a harness writing configs under its own run dir -- otherwise
+    dies in relative_to() before generation ever starts.
+    """
+    try:
+        return str(out.relative_to(repo))
+    except ValueError:
+        return str(out.resolve())
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--config", default="configs/wbench_full.yaml")
@@ -148,10 +162,11 @@ def main() -> int:
 
     rc = 0
     if not args.dry_run:
+        config_path = config_path_for(out, REPO)
         proc = subprocess.run(
             ["bash", "scripts/finetune/train.sh"],
             cwd=REPO,
-            env={**env, "CONFIG_PATH": str(out.relative_to(REPO))},
+            env={**env, "CONFIG_PATH": config_path},
         )
         rc = proc.returncode
         if rc != 0:
