@@ -33,9 +33,13 @@ def init_distributed() -> DistributedState:
 
     if world_size > 1 and not dist.is_initialized():
         timeout_seconds = int(os.environ.get("ALAYA_DISTRIBUTED_TIMEOUT_SECONDS", "3600"))
+        # Pass device_id so NCCL binds this rank to the device set above. Without it
+        # torch cannot infer the rank->GPU mapping, warns on every rank, and leaves a
+        # real hang risk if the mapping is ever wrong; it also defers NCCL init.
         dist.init_process_group(
             backend="nccl" if device.type == "cuda" else "gloo",
             timeout=datetime.timedelta(seconds=timeout_seconds),
+            device_id=device if device.type == "cuda" else None,
         )
         rank = dist.get_rank()
         world_size = dist.get_world_size()

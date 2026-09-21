@@ -39,13 +39,15 @@ def bootstrap_context_parallel(seed, compile_mode):
     if cp_size <= 1:
         return cp_size, True, seed, compile_mode
 
-    torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", rank)))
+    _local_rank = int(os.environ.get("LOCAL_RANK", rank))
+    torch.cuda.set_device(_local_rank)
     # The platform image often exports NCCL_DEBUG=INFO, which floods the console
     # with per-channel topology logs from every rank. Quiet it (set before NCCL
     # initializes); opt back in with FLASH_NCCL_DEBUG=1.
     if os.environ.get("FLASH_NCCL_DEBUG") != "1":
         os.environ["NCCL_DEBUG"] = "WARN"
-    dist.init_process_group("nccl")
+    # device_id binds this rank to the device set above; see alaya/utils/distributed.py.
+    dist.init_process_group("nccl", device_id=torch.device("cuda", _local_rank))
     initialize_context_parallel(cp_size)
     if seed is None:
         seed = 1234
