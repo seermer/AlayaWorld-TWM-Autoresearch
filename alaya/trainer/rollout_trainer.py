@@ -2032,6 +2032,31 @@ class RolloutTrainer:
         output_path = output_dir / f"case_{case_id}_combined.mp4"
         self._write_video(output_path, frames)
 
+        # Save the camera path of the written frames, relative to mp4 frame 0.
+        # cam_c2w is indexed by render-timeline pixel (0 = input image) and the first
+        # generated pixel is action_start_pixel (_build_wbench_camera_trajectory). The
+        # causal VAE decodes the prefix latents to 1+(keep-1)*r frames, but `drop` above
+        # removes keep*r, i.e. also the first r-1 generated frames (with no prefix, the
+        # first latent decodes to its last frame only: same offset). So
+        # mp4 frame i == cam_c2w[action_start_pixel + (r - 1) + i].
+        camera_file = None
+        if metadata.get("cam_c2w") is not None:
+            r = int(self.cfg.sample.temporal_stride)
+            action_start_pixel = (
+                self._vigeo_target_prefix_pixel_frames(
+                    history_latent_frames=self._validation_history_latents(mode_cfg)
+                )
+                if self._uses_vigeo_prefix_last_frame()
+                else max(0, int(metadata.get("wbench_target_base_start", 0)) * r)
+            )
+            start = action_start_pixel + r - 1
+            cam = torch.as_tensor(metadata["cam_c2w"]).detach().cpu().double().reshape(-1, 4, 4).numpy()
+            cam = cam[start : start + int(frames.shape[0])]
+            if len(cam):
+                camera_path = output_path.with_name(output_path.stem + "_camera.npz")
+                np.savez(camera_path, cam_c2w=(np.linalg.inv(cam[0]) @ cam).astype(np.float32))
+                camera_file = camera_path.name
+
         chunks_per_turn = int(metadata.get("wbench_chunks_per_turn", 0))
         prompt_schedule = None
         if scheduled_prompt_captions:
@@ -2067,6 +2092,8 @@ class RolloutTrainer:
             "num_frames": int(frames.shape[0]),
             "fps": int(self.cfg.sample.fps),
         }
+        if camera_file:
+            sidecar["camera_file"] = camera_file
         output_path.with_suffix(".json").write_text(json.dumps(sidecar, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def _build_wbench_turn_segments(
