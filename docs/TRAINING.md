@@ -12,7 +12,7 @@ ls outputs/my_finetune/checkpoint-*/                                            
 ```
 
 Environment, base weights and ViGeo are set up as in [`docs/WBENCH.md`](WBENCH.md) section 1;
-activate the `alayaworld` conda env before running anything. Why the recipe looks the way it
+activate the `alayaworld` conda env before running anything (in AutoResearcher it is `AutoResearcher/.envs/alayaworld`: `conda activate <path>`). Why the recipe looks the way it
 does on 24GB cards (LoRA, no text encoder, serial loading) is in [`docs/LOWCOMPUTE.md`](LOWCOMPUTE.md).
 
 Contents:

@@ -14,6 +14,8 @@ WM-AutoResearch/
 
 ## 1. One-time setup
 
+> **In the AutoResearcher project** the envs live at `AutoResearcher/.envs/<name>` (`alayaworld`, `wbench-main`, `wbench-vp`); use `conda activate <path-to>/AutoResearcher/.envs/<name>` or run `<path>/.envs/<name>/bin/python`. See `AutoResearcher/docs/PORTABILITY.md`.
+
 **Environment** — conda env `alayaworld` (python 3.10, torch 2.7.1+cu128):
 
 ```bash
