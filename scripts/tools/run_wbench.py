@@ -13,8 +13,10 @@ needs exactly the same number of rounds.
     # a specific subset
     python scripts/tools/run_wbench.py --config configs/wbench_full.yaml --cases 1,7,23
 
-Each bucket gets its own run.output_dir so the trainer's "skip existing mode_dir"
-resume logic works per bucket.
+The trainer skips a validation mode whose output dir already exists, and the bucket
+modes keep their names across launches, so every launch writes under its own
+timestamped step dir. Resuming is by rendered video (--resume), and a launch that
+leaves any requested case unrendered exits non-zero.
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -45,6 +48,10 @@ def load_cases(cases_dir: Path, wanted: set[str] | None) -> dict[str, dict]:
             continue
         out[cid] = json.loads(path.read_text(encoding="utf-8"))
     return out
+
+
+def unrendered(video_dir: Path, case_ids) -> list[str]:
+    return sorted(c for c in case_ids if not (video_dir / f"case_{c}_combined.mp4").exists())
 
 
 def config_path_for(out: Path, repo: Path) -> str:
@@ -99,7 +106,8 @@ def main() -> int:
 
     if args.resume:
         before = len(cases)
-        cases = {c: d for c, d in cases.items() if not (video_dir / f"case_{c}_combined.mp4").exists()}
+        todo = set(unrendered(video_dir, cases))
+        cases = {c: d for c, d in cases.items() if c in todo}
         print(f"[run_wbench] resume: {before - len(cases)}/{before} cases already rendered")
         if not cases:
             print("[run_wbench] nothing to do")
@@ -146,6 +154,11 @@ def main() -> int:
     # the config, so the 13B model is loaded once instead of once per bucket.
     run_cfg = copy.deepcopy(cfg)
     run_cfg["validation"]["modes"] = {}
+    # A fresh step dir per launch: a bucket dir left by an earlier (crashed or subset)
+    # launch would otherwise make the trainer skip that whole bucket.
+    run_cfg["validation"]["step_dir_suffix"] = (
+        f"{cfg['validation'].get('step_dir_suffix') or ''}_{time.strftime('%Y%m%d-%H%M%S')}"
+    )
     for turns in sorted(buckets):
         ids = sorted(buckets[turns], key=lambda x: int(x) if x.isdigit() else 0)
         bmode = copy.deepcopy(mode)
@@ -171,6 +184,10 @@ def main() -> int:
         rc = proc.returncode
         if rc != 0:
             print(f"[run_wbench] generation FAILED (rc={rc})", file=sys.stderr)
+        missing = unrendered(video_dir, cases)
+        if missing:
+            print(f"[run_wbench] {len(missing)} requested case(s) not rendered: {missing[:10]}", file=sys.stderr)
+            rc = rc or 1
 
     rendered = len(list(video_dir.glob("case_*_combined.mp4"))) if video_dir.exists() else 0
     print(f"\n[run_wbench] {rendered} videos in {video_dir}")
