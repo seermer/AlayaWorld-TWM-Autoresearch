@@ -50,6 +50,17 @@ def load_cases(cases_dir: Path, wanted: set[str] | None) -> dict[str, dict]:
     return out
 
 
+def parse_cases(arg: str) -> set[str]:
+    """Case ids separated by commas or whitespace, or a file holding them.
+
+    Only a comma-free value is tried as a path: Path.exists() on a long id list
+    raises "File name too long" instead of returning False.
+    """
+    if "," not in arg and Path(arg).is_file():
+        arg = Path(arg).read_text()
+    return set(arg.replace(",", " ").split())
+
+
 def unrendered(video_dir: Path, case_ids) -> list[str]:
     return sorted(c for c in case_ids if not (video_dir / f"case_{c}_combined.mp4").exists())
 
@@ -92,9 +103,7 @@ def main() -> int:
 
     wanted: set[str] | None = None
     if args.cases:
-        p = Path(args.cases)
-        raw = p.read_text().split() if p.exists() else args.cases.replace(",", " ").split()
-        wanted = {s.strip() for s in raw if s.strip()}
+        wanted = parse_cases(args.cases)
 
     cases = load_cases(cases_dir, wanted)
     if wanted:
