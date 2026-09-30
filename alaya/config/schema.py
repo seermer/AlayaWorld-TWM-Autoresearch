@@ -434,6 +434,9 @@ class ValidationDatasetConfig:
     # true  = the 289-case full split, for text-driven models that can also serve
     #         event_edit / subject_action / perspective_switch turns from the prompt.
     include_non_navigation: bool = False
+    # Camera action for every turn of a case that has no navigation turn (all 131 such
+    # cases of the full split): "W" keeps the camera moving forward, "stop" holds it.
+    no_navigation_action: str = "W"
     image_dir: str | None = None       # custom first-frame directory (reusing the actions of pose_case_id)
     pose_case_id: str | None = None
     pose_actions: list[str] = field(default_factory=list)

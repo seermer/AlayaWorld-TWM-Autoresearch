@@ -354,6 +354,7 @@ def build_validation_dataset(
             include_non_navigation=bool(
                 getattr(mode_cfg.dataset, "include_non_navigation", False)
             ),
+            no_navigation_action=str(mode_cfg.dataset.no_navigation_action),
         )
     sources = SOURCE_ALIASES.get(source_name, [source_name])
     caption_anchor_frame = _validation_caption_anchor_frame(cfg, mode_cfg)
