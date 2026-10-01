@@ -203,7 +203,7 @@ runtime:
   text_embed_cache_entries: 512   # x ~8MB per entry: bound the per-rank RAM cache
   vae_chunk_size: 33
   # A whole-video VAE decode needs tens of GB at 544x960; decode in 8-latent tiles
-  # with 6 latents of context each side, which is frame-exact with a whole decode.
+  # with 6 latents of context each side: within ~0.1/255 (mean) of a whole decode.
   vae_decode_chunk_latents: 8
   vae_decode_overlap_latents: 6
   vae_latent_cache_dir: cache/vae_latent_ltx23_544x960

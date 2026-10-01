@@ -3181,8 +3181,8 @@ class RolloutTrainer:
         Each core chunk [s:e) is decoded with `runtime.vae_decode_overlap_latents`
         neighbour latents of context on each side, and only the core's frames are
         kept. That supplies the LTX decoder's cross-chunk temporal dependency, so
-        the result is frame-exact with a whole decode (once overlap >= the decoder's
-        receptive field, ~6 latents) instead of showing a seam per chunk boundary.
+        there is no seam per chunk boundary. It is not bit-exact with a whole decode:
+        at overlap 6 the frames differ by ~0.1/255 on average (max 13/255).
         A whole decode of a minute-long rollout at 544x960 needs far more than a
         24GB card has. Ported from alaya/inference/engine.py.
         """

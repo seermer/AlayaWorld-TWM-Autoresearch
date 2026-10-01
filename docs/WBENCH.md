@@ -105,7 +105,7 @@ WBench's `--gpus` defaults to every visible GPU, so pass it explicitly.
 | `alaya/trainer/rollout_trainer.py`: `validation.per_sample_seed` | The rollout noise was drawn from the rank's global CUDA stream, so a case's video depended on which rank it landed on and how many samples ran before it. Keyed on the case id instead, a case reproduces from `run.seed` alone. |
 | `alaya/model/loader.py`: `ALAYA_SKIP_TEXT_ENCODER`, `ALAYA_GEMMA_DEVICE_MAP`, `ALAYA_GEMMA_MAX_MEMORY` | Serve prompts from the on-disk cache instead of holding a 24GB text encoder; and let the precache pass spread Gemma over two cards. |
 | `alaya/model/loader.py`: `_release_host_arenas()` | `LTX23Model` is built in fp32 (52GB) and cast to bf16; glibc keeps the freed arenas, so five ranks pinned all 251GB of host RAM. |
-| `alaya/trainer/rollout_trainer.py`: `_decode_latent_overlap_tiled` | A whole-video VAE decode at 544x960 exceeds a 24GB card. Ported the da3 engine's overlap-tiling decode, which is frame-exact with a whole decode rather than leaving a seam per chunk. |
+| `alaya/trainer/rollout_trainer.py`: `_decode_latent_overlap_tiled` | A whole-video VAE decode at 544x960 exceeds a 24GB card. Ported the da3 engine's overlap-tiling decode, which matches a whole decode to within ~0.1/255 mean (max 13/255, measured at overlap 6) rather than leaving a seam per chunk. |
 | `alaya/trainer/rollout_trainer.py`: benchmark output written before the diagnostic dump; `validation.save_debug_videos` | The diagnostic strip decodes far more pixels than the output video and OOM'd on 24-round rollouts, taking the real output down with it. |
 | `alaya/trainer/rollout_trainer.py` + `alaya/train.py`: `ALAYA_SKIP_TRAIN_DATALOADER` | `--validate-only` built the training dataloader, so rendering videos required the Sekai training corpus to be on disk. |
 | `configs/wbench_full.yaml`: `vigeo_cache_budget` 262144 -> 65536 | The shipped value is sized for 80GB cards; ViGeo's KV cache alone then needs ~12GB on top of the sharded DiT. |
@@ -117,12 +117,15 @@ FA2 with FA3 opt-in via `ALAYA_USE_FA3=1` (FA3 is Hopper-only, must be built loc
 and aborts the process at the C++ level when it meets the xformers ViGeo/DA3 pull in).
 The rest are additive and inert unless enabled.
 
-The camera trajectory is left exactly as upstream: interaction turns reuse the previous
-navigation action, and a case that never navigates gets `W` throughout. No WBench
-metric grades the camera on those cases (`navigation_trajectory` is scored on 0 of the
-131) while `dynamic_degree` is scored on all of them, and a held camera renders them
-nearly static -- measured 0.0 on 4 of 7 sampled non-navigation cases against 1.0 on
-every navigation case.
+Interaction turns reuse the previous navigation action, and a case that never
+navigates gets `W` throughout (`dataset.no_navigation_action`; upstream only rendered
+navigation cases, so it never reached these 131). No WBench metric grades the camera on
+those cases (`navigation_trajectory` is scored on 0 of the 131) while `dynamic_degree`
+is scored on all of them. A paired A/B on all 131 (`experiments/2026-09-30_wbench_ab`)
+found no gain from holding the camera (`stop`): AutoResearcher score +0.001, 95% CI
+[-0.009, +0.011]; `stop` was worse per case on 79 of 131. It drops `dynamic_degree`
+from 0.93 to 0.09 and raises every consistency and quality metric, but leaves the
+interaction-adherence metrics where they were. So `W` stays the default.
 
 ## 5. Two traps worth knowing
 
