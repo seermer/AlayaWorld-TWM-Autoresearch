@@ -218,6 +218,21 @@ mechanism by which this work leaves inference and WBench alone**, rather than a 
 An unmatched LoRA key is now fatal rather than a warning: a silently skipped adapter produces
 a checkpoint that loads cleanly and generates subtly wrong video.
 
+**The merge is lossy for a small fine-tune.** `transformer.pt` is bf16, and the merge adds the
+LoRA delta into those weights: most of a short run's delta is below bf16 resolution and is
+rounded away (measured on 100-300 step runs: 45-68% relative error of the merged delta). To
+render with the few-step student and keep the fine-tune exact, leave the base as released and
+load both adapters as one instead:
+
+```bash
+python scripts/tools/concat_loras.py \
+    --loras weights/alaya-world-dmd/lora.safetensors outputs/stage2b_lowcompute/checkpoint-300/lora.safetensors \
+    --output outputs/stage2b_lowcompute/checkpoint-300-eval
+```
+
+Then set `paths.dmd_resume` to that directory, `lora.rank` and `lora.alpha` to the sum of the two
+ranks (256 + 64), and `paths.history_encoder` to the checkpoint's `history_encoder.pt`.
+
 ### Four things to change before rendering on 24GB cards
 
 `configs/infer_i2v_camera_ar.yaml` is written for 80GB hardware, so a copy of it needs the same
