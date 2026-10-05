@@ -57,7 +57,7 @@ def main() -> None:
     # Classifier-free guidance is always on in validation (_validation_cfg_scale maps
     # cfg_scale<=1 to 3.0), so the negative prompt is encoded once per sample too.
     for text in [cfg.validation.negative_prompt]:
-        if text:
+        if text is not None:  # "" is a legal prompt: an empty negative prompt
             seen.add(str(text))
             prompts.append(str(text))
     for i in range(len(dataset)):
