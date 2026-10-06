@@ -360,7 +360,7 @@ ones you are most likely to change:
 | `optimizer.max_checkpoints` | `5` | older checkpoints are deleted beyond this |
 | `lora.rank`, `lora.alpha` | `64`, `64` | adapter size; lower rank if memory is tight. Pass the same values to the merge tool |
 | `memory.drop_prob`, `anti_drift.*` | stage 2b values | regularizers that keep long rollouts stable; leave on |
-| `sample.height`, `sample.width` | `416`, `736` | training resolution; both must be divisible by 32. 544x960 is unlikely to fit in 24GB |
+| `sample.height`, `sample.width` | `416`, `736` | training resolution; both must be divisible by 32. 544x960 also fits on 4x 24GB (measured: 20.1GB peak per rank against 19.0GB, ~30% slower per step) |
 | `runtime.text_embed_cache_dir` | per recipe | where prompt embeddings are cached, section 2.6 |
 | `validation.enabled` | `false` | a rollout during training costs minutes; generate from a checkpoint instead (section 3.4) |
 

@@ -171,7 +171,8 @@ properly with `ALAYA_LOG_MEMORY=1`. There is ~6GB of genuine headroom, not 0.5GB
 
 If a longer schedule or a larger resolution does OOM, the knobs in order of preference are:
 `spatial_memory.vigeo_cache_budget` down, `lora.rank` 64 -> 32, activation CPU offload,
-resolution down to 352x608. 544x960 is unlikely to fit — it is ~1.7x the tokens.
+resolution down to 352x608. 544x960 (~1.7x the tokens) also fits on 4x 24GB: measured 20.1GB
+allocated per rank over 3 steps, against 19.0GB at 416x736, and ~30% slower per step.
 
 ## 5. What was changed in this repo, and why
 
