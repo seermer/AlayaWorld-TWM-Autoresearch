@@ -88,7 +88,7 @@ def main() -> None:
 
     t0 = time.time()
     for n, prompt in enumerate(missing, 1):
-        with torch.no_grad():
+        with torch.inference_mode():
             output = encode_text(text_encoder, [prompt])
         ctx = output[0][0] if isinstance(output, list) and output[0].dim() == 3 else output[0]
         disk_put(cache_dir, prompt, ctx)
