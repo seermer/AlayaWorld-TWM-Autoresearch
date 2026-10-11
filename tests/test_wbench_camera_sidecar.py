@@ -23,7 +23,7 @@ def test_wbench_render_saves_written_camera_path(tmp_path):
     trainer.cfg = NS(
         sample=NS(temporal_stride=r, fps=24),
         layout=NS(sink_latent_frames=1, history_latent_frames=n_hist),
-        validation=NS(video_history_latent_frames=n_hist),
+        validation=NS(video_history_latent_frames=n_hist, vigeo_pred_decode_mode="chunk"),
         spatial_memory=NS(enabled=True, context_mode="vigeo_prefix_last_frame", depth_backend="vigeo"),
         run=NS(output_dir=str(tmp_path)),
     )
@@ -64,3 +64,35 @@ def test_wbench_render_saves_written_camera_path(tmp_path):
     sidecar = json.loads((tmp_path / "case_7_combined.json").read_text())
     assert sidecar["camera_file"] == "case_7_combined_camera.npz"
     assert sidecar["num_frames"] == 64
+
+
+def test_wbench_render_decodes_chunk_by_chunk_like_the_documented_path(tmp_path):
+    r, n_hist, k, rounds = 8, 4, 4, 2
+    trainer = object.__new__(RolloutTrainer)
+    trainer.dtype = torch.float32
+    trainer.cfg = NS(
+        sample=NS(temporal_stride=r, fps=24),
+        layout=NS(sink_latent_frames=1, history_latent_frames=n_hist),
+        validation=NS(video_history_latent_frames=n_hist, vigeo_pred_decode_mode="chunk"),
+        spatial_memory=NS(enabled=True, context_mode="vigeo_prefix_last_frame", depth_backend="vigeo"),
+        run=NS(output_dir=str(tmp_path)),
+    )
+    written, decoded = {}, {}
+
+    def chunk_decode(*, nearby_latents, chunks):  # the input frame, then every generated frame
+        decoded.update(nearby=len(nearby_latents), chunks=len(chunks))
+        return torch.zeros(1 + len(chunks) * k * r, 2, 2, 3)
+
+    trainer._decode_i2v_rollout_chunks_to_video_frames = chunk_decode
+    trainer._write_video = lambda path, frames: written.update(n=int(frames.shape[0]))
+    for keep_last, expected in ((False, 64), (True, 65)):
+        trainer._save_wbench_output_video(
+            mode_cfg=NS(wbench_output_dir=str(tmp_path), wbench_keep_last_frame=keep_last,
+                        layout=NS(history_latent_frames=n_hist)),
+            mode_dir=tmp_path, stem="s",
+            metadata={"wbench_case_id": "7", "wbench_output_rounds": rounds, "wbench_chunks_per_turn": 3,
+                      "wbench_used_actions": ["W"]},
+            pred_latents=[torch.zeros(1, 1, k, 1, 1) for _ in range(rounds + 1)],
+            nearby_condition_latents=[torch.zeros(1, 1, 2, 1, 1) for _ in range(rounds + 1)],
+        )
+        assert written["n"] == expected and decoded == {"nearby": rounds, "chunks": rounds}

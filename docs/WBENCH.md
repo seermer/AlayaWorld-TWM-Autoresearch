@@ -130,7 +130,8 @@ one step per video frame, at these speeds (`wbench_*_per_sec` in the mode config
 
 - The camera holds still on every turn without a navigation action, including every turn of
   the 131 cases that never navigate.
-- The video is the input frame followed by the generated frames: 96 frames per turn, frame k
+- The video is decoded chunk by chunk, as the documented inference path writes its
+  `pred_clean` video. It is the input frame followed by the generated frames: 96 frames per turn, frame k
   is pose k. The first turn therefore has 95 camera steps, and the model's last generated
   frame (one past the last pose) is not written unless `wbench_keep_last_frame` is set.
 - Third-person cases use the orbit camera at the same speeds.

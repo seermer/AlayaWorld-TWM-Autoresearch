@@ -1492,6 +1492,7 @@ class RolloutTrainer:
                             mode_dir=mode_dir,
                             stem=stem,
                             pred_latents=pred_latents,
+                            nearby_condition_latents=nearby_condition_latents,
                             metadata=metadata,
                             scheduled_prompt_captions=scheduled_prompt_captions,
                             latent_full=latent_full,
@@ -1994,6 +1995,7 @@ class RolloutTrainer:
         stem: str,
         pred_latents: list[torch.Tensor],
         metadata: dict[str, Any],
+        nearby_condition_latents: list[torch.Tensor | None] | None = None,
         scheduled_prompt_captions: list[str] | None = None,
         latent_full: torch.Tensor | None = None,
         N: int = 0,
@@ -2006,28 +2008,40 @@ class RolloutTrainer:
         output_rounds = min(output_rounds, len(pred_latents))
         K = int(pred_latents[0].shape[2])
         pred_seq = [p.detach().to(dtype=self.dtype) for p in pred_latents[:output_rounds]]
-        prefix_latents = None
-        if latent_full is not None:
-            sink_count = self.cfg.layout.sink_latent_frames
-            hist_end = sink_count + gap_steps + N
-            if N > 0:
-                keep = max(1, min(int(self.cfg.validation.video_history_latent_frames or N), N))
-                keep_start, prefix_end = hist_end - keep, hist_end
-            else:
-                keep = max(0, cond_end)
-                keep_start, prefix_end = hist_end, hist_end + keep
-            if keep > 0 and prefix_end <= int(latent_full.shape[2]):
-                prefix_latents = latent_full[:, :, keep_start:prefix_end].to(dtype=self.dtype).contiguous()
-        if prefix_latents is not None:
-            latent = torch.cat([prefix_latents] + pred_seq, dim=2).contiguous()
+        nearby = list(nearby_condition_latents or [])[:output_rounds]
+        if (
+            self._uses_vigeo_prefix_last_frame()
+            and self.cfg.validation.vigeo_pred_decode_mode != "full"
+            and len(nearby) == len(pred_seq)
+            and all(n is not None for n in nearby)
+        ):
+            # Decode as the documented inference path writes its pred_clean video: chunk by chunk,
+            # each with its own decoder prefix. Frame 0 is the input frame, and frame k is pose k
+            # of WBench's reference trajectory; the last generated frame is one past the last pose.
+            frames = self._decode_i2v_rollout_chunks_to_video_frames(nearby_latents=nearby, chunks=pred_seq)
+            if not mode_cfg.wbench_keep_last_frame:
+                frames = frames[:-1]
         else:
-            latent = torch.cat(pred_seq, dim=2).contiguous()
-        frames = self._decode_latent_to_video_frames(latent)
-        if prefix_latents is not None:
-            # Keep the input frame (the last prefix frame) and drop the last generated frame: frame k
-            # is pose k of WBench's reference trajectory, frames_per_turn frames per turn.
-            drop = (int(prefix_latents.shape[2]) - 1) * int(self.cfg.sample.temporal_stride)
-            frames = frames[drop:] if mode_cfg.wbench_keep_last_frame else frames[drop:-1]
+            prefix_latents = None
+            if latent_full is not None:
+                sink_count = self.cfg.layout.sink_latent_frames
+                hist_end = sink_count + gap_steps + N
+                if N > 0:
+                    keep = max(1, min(int(self.cfg.validation.video_history_latent_frames or N), N))
+                    keep_start, prefix_end = hist_end - keep, hist_end
+                else:
+                    keep = max(0, cond_end)
+                    keep_start, prefix_end = hist_end, hist_end + keep
+                if keep > 0 and prefix_end <= int(latent_full.shape[2]):
+                    prefix_latents = latent_full[:, :, keep_start:prefix_end].to(dtype=self.dtype).contiguous()
+            if prefix_latents is not None:
+                latent = torch.cat([prefix_latents] + pred_seq, dim=2).contiguous()
+            else:
+                latent = torch.cat(pred_seq, dim=2).contiguous()
+            frames = self._decode_latent_to_video_frames(latent)
+            if prefix_latents is not None:
+                drop = (int(prefix_latents.shape[2]) - 1) * int(self.cfg.sample.temporal_stride)
+                frames = frames[drop:] if mode_cfg.wbench_keep_last_frame else frames[drop:-1]
 
         output_dir_raw = getattr(mode_cfg, "wbench_output_dir", None)
         output_dir = Path(output_dir_raw) if output_dir_raw else Path(self.cfg.run.output_dir) / "work_dirs" / "alaya_vigeo" / "videos"
