@@ -434,9 +434,6 @@ class ValidationDatasetConfig:
     # true  = the 289-case full split, for text-driven models that can also serve
     #         event_edit / subject_action / perspective_switch turns from the prompt.
     include_non_navigation: bool = False
-    # Camera action for every turn of a case that has no navigation turn (all 131 such
-    # cases of the full split): "W" keeps the camera moving forward, "stop" holds it.
-    no_navigation_action: str = "W"
     image_dir: str | None = None       # custom first-frame directory (reusing the actions of pose_case_id)
     pose_case_id: str | None = None
     pose_actions: list[str] = field(default_factory=list)
@@ -486,11 +483,15 @@ class ValidationModeConfig:
     # ===== fields specific to the wbench_navi validation mode =====
     all_samples: bool = False              # true: split the whole dataset across ranks (padded), ignoring max_samples
     wbench_chunks_per_turn: int = 3        # rollout rounds per turn (one action)
-    wbench_all_turns: bool = False         # true: use every turn (interaction turns reuse the previous navigation action)
+    wbench_all_turns: bool = False         # true: use every turn (the camera holds still on a turn without a navigation action)
     wbench_output_dir: str | None = None   # output directory for case_<id>_combined.mp4
-    wbench_forward_speed_per_latent: float = 0.16
-    wbench_yaw_deg_per_latent: float = 6.0
-    wbench_pitch_deg_per_latent: float = 6.0
+    wbench_keep_last_frame: bool = False   # true: also write the last generated frame (one past the last turn's poses)
+    # Camera speeds per second of video: yaw is the official WBench LingBot example's, pitch
+    # turns 30 deg (the navigation metric's floor) in a first turn, and move is the WBench
+    # reference's 0.48 scaled like yaw (9.6 / 18).
+    wbench_move_per_sec: float = 0.256
+    wbench_yaw_deg_per_sec: float = 9.6
+    wbench_pitch_deg_per_sec: float = 7.6
     # true: use the robust XYZ median of the ViGeo pointmap inside subject_mask as the
     # third-person orbit pivot; false falls back to a fixed pivot on the centre ray.
     wbench_orbit_subject_depth: bool = False

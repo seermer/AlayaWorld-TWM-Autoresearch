@@ -116,14 +116,12 @@ class WBenchNaviDataset(Dataset):
         sekai_random_n: int = 0,
         sekai_seed: int = 42,
         include_non_navigation: bool = False,
-        no_navigation_action: str = "W",
     ) -> None:
         self.root = Path(root)
         self.width = int(width)
         self.height = int(height)
         self.frames = int(frames)
         self.include_non_navigation = bool(include_non_navigation)
-        self.no_navigation_action = str(no_navigation_action)
         self._to_tensor = transforms.ToTensor()
         self._rewritten = _load_rewritten_prompts(self.root)
 
@@ -308,7 +306,7 @@ class WBenchNaviDataset(Dataset):
             persp0 = str((case.get("settings", {}) or {}).get("perspective", case.get("perspective", "third_person")))
             subj = _short_subject(case)
             nav_turns = {int(it.get("turn", 0) or 0) for it in (case.get("interactions") or []) if str(it.get("type")) == "navigation"}
-            full_acts = _full_turn_actions(case, default=self.no_navigation_action)
+            full_acts = _full_turn_actions(case)
             for ti in range(len(prompt_schedule)):
                 if (ti + 1) in nav_turns and ti < len(full_acts):
                     cl = _action_clause(full_acts[ti], third_person=persp0 != "first_person", subject=subj)
@@ -373,7 +371,7 @@ class WBenchNaviDataset(Dataset):
             disp_id=f"case_{case_id}", case_id=str(case_id), case_path=str(case_path),
             extra={
                 "wbench_prompt_schedule": prompt_schedule,
-                "wbench_turn_actions": _full_turn_actions(case, default=self.no_navigation_action),  # camera action of every turn
+                "wbench_turn_actions": _full_turn_actions(case),  # camera action of every turn
                 "wbench_subject_mask": subject_mask_path,
             },
         )
@@ -476,32 +474,14 @@ def _max_turn(case: dict[str, Any]) -> int:
     return max(turns) if turns else 0
 
 
-def _full_turn_actions(case: dict[str, Any], default: str = "W") -> list[str]:
-    """Return the camera action of each turn 1..max_turn (used by the all-turns interaction test):
-       - navigation turn -> that turn's navigation action
-       - interaction turn -> reuse the previous navigation action so the camera keeps moving while
-         the prompt schedule drives the content change.
-       For pure navigation cases the result matches the plain navigation actions.
-
-       On the full split this also covers cases that never navigate, where every turn
-       takes `default`. Keeping that at "W" is deliberate: no WBench metric grades the
-       camera trajectory on those cases (navigation_trajectory is scored on 0 of the
-       131), while dynamic_degree is scored on all of them, and a held camera renders
-       them nearly static.
-    """
-    its = case.get("interactions", []) or []
+def _full_turn_actions(case: dict[str, Any]) -> list[str]:
+    """Camera action of each turn 1..max_turn: a navigation turn's own action, "stop" for every other turn."""
     nav = {
         int(it.get("turn", 0) or 0): str(it.get("action", "stop"))
-        for it in its
+        for it in (case.get("interactions", []) or [])
         if str(it.get("type", "")).lower() == "navigation"
     }
-    out: list[str] = []
-    last = default
-    for t in range(1, _max_turn(case) + 1):
-        if t in nav:
-            last = nav[t]
-        out.append(last)
-    return out
+    return [nav.get(t, "stop") for t in range(1, _max_turn(case) + 1)]
 
 
 def _read_sekai_description(path: Path) -> str | None:

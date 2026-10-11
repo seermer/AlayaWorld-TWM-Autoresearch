@@ -1774,9 +1774,10 @@ class RolloutTrainer:
         orbit_pivot: np.ndarray | None = None,
     ) -> torch.Tensor:
         stride = max(1, int(self.cfg.sample.temporal_stride))
-        forward_step = float(getattr(mode_cfg, "wbench_forward_speed_per_latent", 0.16)) / float(stride)
-        yaw_step = math.radians(float(getattr(mode_cfg, "wbench_yaw_deg_per_latent", 6.0))) / float(stride)
-        pitch_step = math.radians(float(getattr(mode_cfg, "wbench_pitch_deg_per_latent", 6.0))) / float(stride)
+        fps = float(self.cfg.sample.fps)
+        forward_step = float(mode_cfg.wbench_move_per_sec) / fps
+        yaw_step = math.radians(float(mode_cfg.wbench_yaw_deg_per_sec)) / fps
+        pitch_step = math.radians(float(mode_cfg.wbench_pitch_deg_per_sec)) / fps
         frames_per_turn = max(1, int(chunks_per_turn) * int(K) * stride)
         action_start_pixel = (
             self._vigeo_target_prefix_pixel_frames(
@@ -1919,7 +1920,8 @@ class RolloutTrainer:
     ) -> dict[str, float]:
         if frame_idx < action_start_pixel:
             return {"forward": 0.0, "right": 0.0, "yaw": 0.0, "pitch": 0.0}
-        action_idx = int(frame_idx - action_start_pixel) // max(1, int(frames_per_turn))
+        # WBench's reference poses: the input frame is pose 0 of turn 0, so turn 0 has one step fewer.
+        action_idx = int(frame_idx - action_start_pixel + 1) // max(1, int(frames_per_turn))
         if action_idx < 0 or action_idx >= len(actions):
             return {"forward": 0.0, "right": 0.0, "yaw": 0.0, "pitch": 0.0}
         return self._wbench_action_to_nav(actions[action_idx])
@@ -2022,9 +2024,10 @@ class RolloutTrainer:
             latent = torch.cat(pred_seq, dim=2).contiguous()
         frames = self._decode_latent_to_video_frames(latent)
         if prefix_latents is not None:
-            drop = int(prefix_latents.shape[2]) * int(self.cfg.sample.temporal_stride)
-            if 0 < drop < int(frames.shape[0]):
-                frames = frames[drop:]
+            # Keep the input frame (the last prefix frame) and drop the last generated frame: frame k
+            # is pose k of WBench's reference trajectory, frames_per_turn frames per turn.
+            drop = (int(prefix_latents.shape[2]) - 1) * int(self.cfg.sample.temporal_stride)
+            frames = frames[drop:] if mode_cfg.wbench_keep_last_frame else frames[drop:-1]
 
         output_dir_raw = getattr(mode_cfg, "wbench_output_dir", None)
         output_dir = Path(output_dir_raw) if output_dir_raw else Path(self.cfg.run.output_dir) / "work_dirs" / "alaya_vigeo" / "videos"
@@ -2033,12 +2036,9 @@ class RolloutTrainer:
         self._write_video(output_path, frames)
 
         # Save the camera path of the written frames, relative to mp4 frame 0.
-        # cam_c2w is indexed by render-timeline pixel (0 = input image) and the first
-        # generated pixel is action_start_pixel (_build_wbench_camera_trajectory). The
-        # causal VAE decodes the prefix latents to 1+(keep-1)*r frames, but `drop` above
-        # removes keep*r, i.e. also the first r-1 generated frames (with no prefix, the
-        # first latent decodes to its last frame only: same offset). So
-        # mp4 frame i == cam_c2w[action_start_pixel + (r - 1) + i].
+        # cam_c2w is indexed by render-timeline pixel and the first generated pixel is
+        # action_start_pixel (_build_wbench_camera_trajectory); mp4 frame 0 is the input
+        # frame just before it. So mp4 frame i == cam_c2w[action_start_pixel - 1 + i].
         camera_file = None
         if metadata.get("cam_c2w") is not None:
             r = int(self.cfg.sample.temporal_stride)
@@ -2049,7 +2049,7 @@ class RolloutTrainer:
                 if self._uses_vigeo_prefix_last_frame()
                 else max(0, int(metadata.get("wbench_target_base_start", 0)) * r)
             )
-            start = action_start_pixel + r - 1
+            start = action_start_pixel - 1
             cam = torch.as_tensor(metadata["cam_c2w"]).detach().cpu().double().reshape(-1, 4, 4).numpy()
             cam = cam[start : start + int(frames.shape[0])]
             if len(cam):

@@ -117,15 +117,29 @@ FA2 with FA3 opt-in via `ALAYA_USE_FA3=1` (FA3 is Hopper-only, must be built loc
 and aborts the process at the C++ level when it meets the xformers ViGeo/DA3 pull in).
 The rest are additive and inert unless enabled.
 
-Interaction turns reuse the previous navigation action, and a case that never
-navigates gets `W` throughout (`dataset.no_navigation_action`; upstream only rendered
-navigation cases, so it never reached these 131). No WBench metric grades the camera on
-those cases (`navigation_trajectory` is scored on 0 of the 131) while `dynamic_degree`
-is scored on all of them. A paired A/B on all 131 (`experiments/2026-09-30_wbench_ab`)
-found no gain from holding the camera (`stop`): AutoResearcher score +0.001, 95% CI
-[-0.009, +0.011]; `stop` was worse per case on 79 of 131. It drops `dynamic_degree`
-from 0.93 to 0.09 and raises every consistency and quality metric, but leaves the
-interaction-adherence metrics where they were. So `W` stays the default.
+### Camera and frame layout (the 2026-10-10 standard)
+
+The camera follows WBench's reference pose layout (`WBench/src/models/camera/poses.py`),
+one step per video frame, at these speeds (`wbench_*_per_sec` in the mode config):
+
+| | Speed | Per 4 s turn | Source |
+|---|---|---|---|
+| Yaw (left, right) | 9.6 deg/s | about 38 deg | WBench's official LingBot example |
+| Pitch (up, down) | 7.6 deg/s | 30 deg | LingBot's 4.8 raised to the navigation metric's floor |
+| Move (W, S, A, D) | 0.256 /s | about 1.0 | the reference's 0.48 scaled like yaw (9.6 / 18) |
+
+- The camera holds still on every turn without a navigation action, including every turn of
+  the 131 cases that never navigate.
+- The video is the input frame followed by the generated frames: 96 frames per turn, frame k
+  is pose k. The first turn therefore has 95 camera steps, and the model's last generated
+  frame (one past the last pose) is not written unless `wbench_keep_last_frame` is set.
+- Third-person cases use the orbit camera at the same speeds.
+
+Before this, the camera turned 18 deg/s and moved 0.48 /s, repeated the previous navigation
+action on other turns (`W` for a case that never navigates), and the video started at the 8th
+generated frame. Branch `live-10-10` holds that code. A paired A/B at the old speeds
+(`experiments/2026-09-30_wbench_ab`) found that holding the camera on the 131 never-navigating
+cases drops `dynamic_degree` from 0.93 to 0.09 on them with no net score change.
 
 ## 5. Two traps worth knowing
 
