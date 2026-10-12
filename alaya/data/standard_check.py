@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from alaya.data.standard import FPS_TOLERANCE, DatasetSpec, chunk_windows
+from alaya.data.standard import FPS_TOLERANCE, DatasetSpec, chunk_windows, mixed_windows
 
 _ROTATION_TOL = 1e-2
 _PRINCIPAL_POINT_TOL = 0.05
@@ -120,6 +120,12 @@ def _check_clip(spec, clip_id, report, *, camera, fps, window_frames, prefix_fra
                     "so segment mode never trains on it"
                 )
         report.windows += len(usable)
+    elif spec.prompt_mode == "mixed":
+        windows = mixed_windows(prompts, available_frames=available, window_frames=window_frames,
+                                prefix_frames=prefix_frames, chunk_frames=chunk_frames, fps=fps)
+        if not windows:
+            report.errors.append(f"{where}: no prompt is long enough for a training target, so mixed has nothing to train on")
+        report.windows += len(windows)
     else:
         for boundary in sorted({b for lo, hi, _ in prompts for b in (lo, hi) if 1e-6 < b < duration - 1e-6}):
             frame = boundary * fps

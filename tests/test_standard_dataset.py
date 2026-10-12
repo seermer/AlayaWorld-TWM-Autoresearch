@@ -239,6 +239,25 @@ def test_loader_per_chunk_windows_match_rounds(tmp_path):
     assert seen == {(0, "raw"), (40, "raw"), (80, "transforming"), (120, "sketch"), (160, "sketch")}
 
 
+def test_loader_mixed_windows_keep_the_target_inside_one_prompt(tmp_path):
+    _write_clip(tmp_path, "clip", caption=PENCIL)
+    ds = _dataset("t_mixed", {"root": str(tmp_path), "format": "video_timed_prompts_camera", "prompt_mode": "mixed"})
+    ranges = {s["prompt"]: s["time_range_s"] for s in PENCIL["segments"]}
+    onsets, crossing = set(), 0
+    for epoch in range(200):
+        ds.set_epoch(epoch)
+        item = ds[0]
+        caption, start = item[2], item[11]
+        lo, hi = ranges[caption]
+        target_lo, target_hi = start / 30 + PREFIX / 24, start / 30 + WINDOW / 24      # 30 fps source
+        assert lo - 1 / 24 <= target_lo and target_hi <= hi + 1 / 24
+        if abs(target_lo - lo) <= 1 / 24:
+            onsets.add(caption)
+        crossing += start / 30 < lo - 1 / 24
+    # "transforming" is exactly one target long: its only window starts on its first frame.
+    assert onsets == {"transforming", "sketch"} and crossing > 0
+
+
 def test_loader_segment_windows_stay_inside_one_prompt(tmp_path, monkeypatch):
     monkeypatch.setenv("LTX_OVERALL_CAPTION_PROB", "0.0")
     _write_clip(tmp_path, "clip", caption=PENCIL)

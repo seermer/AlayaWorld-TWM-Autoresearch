@@ -26,7 +26,7 @@ import os
 from dataclasses import dataclass
 
 FORMATS = ("video_caption_camera", "video_timed_prompts_camera", "video_caption_static")
-PROMPT_MODES = ("segment", "per_chunk")
+PROMPT_MODES = ("segment", "per_chunk", "mixed")
 _SPEC_KEYS = {"root", "format", "prompt_mode", "weight"}
 # 23.976 fps ("24 fps" video) counts as the 24 fps training rate.
 FPS_TOLERANCE = 0.01
@@ -170,3 +170,30 @@ def chunk_windows(
             windows.append((start, active[0]))
         start += chunk_frames
     return windows
+
+
+def mixed_windows(
+    prompts: list[tuple[float, float, str]],
+    *,
+    available_frames: int,
+    window_frames: int,
+    prefix_frames: int,
+    chunk_frames: int,
+    fps: float,
+) -> list[tuple[int, int, bool, str]]:
+    """Per prompt, the window starts whose target frames lie inside it.
+
+    Only the `chunk_frames` target frames have to be under the prompt; the history before
+    them may be under an earlier one. Returns (first_start, last_start, at_onset, prompt) at
+    the target fps, where at_onset says that first_start puts the target on the prompt's
+    first frame. Prompts too short for a target are left out.
+    """
+    out = []
+    for lo, hi, prompt in prompts:
+        begin = round(lo * fps)
+        end = min(round(hi * fps), available_frames)
+        first = max(begin, prefix_frames)
+        if end - first >= chunk_frames:
+            out.append((first - prefix_frames, end - chunk_frames - prefix_frames, first == begin, prompt))
+    return out
+

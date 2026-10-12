@@ -41,7 +41,8 @@ def main() -> int:
         report = check_dataset(spec, **layout)
         mode = f", prompt_mode={spec.prompt_mode}" if spec.prompt_mode else ""
         status = "FAIL" if report.errors else "OK"
-        unit = {"segment": "segments long enough for a window", "per_chunk": "round-aligned windows"}.get(
+        unit = {"segment": "segments long enough for a window", "per_chunk": "round-aligned windows",
+                "mixed": "prompts long enough for a target"}.get(
             spec.prompt_mode, "usable clips"
         )
         print(

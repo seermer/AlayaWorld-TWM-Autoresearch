@@ -1156,6 +1156,37 @@ class MultiSourceVideoDataset(Dataset):
                 seg_frame_low + int(self.max_frames * _fps_ratio) + (1 if _need_interp else 0),
             )
 
+        # === Mixed timed prompts: pick a prompt, then any window whose target lies inside it ===
+        if config.get('timed_prompt_mode') == 'mixed' and self.random_frames:
+            from alaya.data.standard import FPS_TOLERANCE, load_timed_prompts, mixed_windows
+            if video_fps < self.target_fps * (1.0 - FPS_TOLERANCE):
+                raise RuntimeError(
+                    f"mixed prompts need video fps >= {self.target_fps}, got {video_fps:.2f}: {video_path}"
+                )
+            if self.max_frames is None or self.min_frames != self.max_frames \
+                    or self.event_target_anchor_frame is None or self.output_latent_frames is None:
+                raise RuntimeError("mixed prompts need a fixed training window layout")
+            _windows = mixed_windows(
+                load_timed_prompts(caption_path),
+                available_frames=available_frames,
+                window_frames=int(self.max_frames),
+                prefix_frames=int(self.event_target_anchor_frame),
+                chunk_frames=int(self.output_latent_frames) * int(self.vae_temporal_factor),
+                fps=float(self.target_fps),
+            )
+            if not _windows:
+                raise RuntimeError(f"no prompt of {video_path} is long enough for a training target")
+            _first, _last, _at_onset, seg_cached_caption = random.choice(_windows)
+            # Half of the draws put the target on the prompt's first frame: the window where
+            # the frames before are still under the earlier prompt.
+            _chunk_start = _first if _at_onset and random.random() < 0.5 else random.randint(_first, _last)
+            seg_caption_type = "mixed"
+            seg_frame_low = int(_chunk_start * _fps_ratio)
+            seg_frame_high = min(
+                video_length,
+                seg_frame_low + int(self.max_frames * _fps_ratio) + (1 if _need_interp else 0),
+            )
+
         vtf = self.vae_temporal_factor
         _cp = getattr(self, 'cp_size', 1)
         _step = vtf * _cp  # step between legal frame counts
