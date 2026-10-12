@@ -591,31 +591,27 @@ def _parse_ps_action(action: str) -> tuple[str, str, str]:
     return "fp", "tp", detail
 
 
-def _perspective_switch_clauses(action: str) -> tuple[str, str]:
-    """(clause for the switching turn, clause that holds the new view on later turns)."""
+def _perspective_switch_clause(action: str) -> str:
+    """Prose for the turn that switches the perspective."""
     raw = str(action).strip()
     if "_to_" not in raw.split(":", 1)[0].lower():
         # Not a WBench code -- a prompts_training_style.jsonl rewrite may already supply
         # prose. _parse_ps_action would fall back to ("fp", "tp") and invent a switch
         # direction, so use the text as written instead.
-        clause = raw if raw.endswith((".", "!", "?")) else f"{raw}."
-        return clause, clause
+        return raw if raw.endswith((".", "!", "?")) else f"{raw}."
     before, after, detail = _parse_ps_action(action)
     after_short = _PS_SHORT.get(after, after)
     if before == after:
         # fp_to_fp / tp_to_tp: the perspective type is unchanged, so the free-text half
         # of the action is the whole instruction.
         switch = f"The camera cuts to a different {after_short} viewpoint"
-        switch += f": {detail}." if detail else "."
-        hold = f"The camera stays on that {after_short} viewpoint"
-        hold += f": {detail}." if detail else "."
-        return switch, hold
+        return switch + (f": {detail}." if detail else ".")
     before_short = _PS_SHORT.get(before, before)
     after_desc = _PS_DESC.get(after, after_short)
     switch = f"The view switches from {before_short} to {after_desc}."
     if detail:
         switch = switch[:-1] + f" — {detail}."
-    return switch, f"The view remains {after_desc}."
+    return switch
 
 
 def _build_training_style_caption(
@@ -646,25 +642,22 @@ def _build_training_style_caption(
 def _build_interaction_prompt_schedule(
     case: dict[str, Any], *, rewritten: dict[str, str] | None = None
 ) -> list[str]:
-    """Return the training-style prompt per turn, accumulating interactions:
+    """Return the training-style prompt per turn: the scene plus that turn's own interactions.
        - event_edit / subject_action.action -> appended to the scene narrative
-       - perspective_switch.action -> appended to the <camera> block
+       - perspective_switch.action -> appended to the scene narrative as prose, and to the <camera> block
+       Earlier turns' interactions are not carried over (WBench's protocol: the world
+       description plus the current interaction).
        Turns are 1-based; index 0..(max_turn-1) corresponds to turn 1..max_turn.
     """
     its = case.get("interactions", []) or []
     turns = [int(it.get("turn", 0) or 0) for it in its]
     max_turn = max(turns) if turns else 1
     inter_rw = (rewritten or {}).get("interactions") or {}
-    scene_acc: list[str] = []
-    camera_acc: list[str] = []
-    # A perspective switch is a state, not an accumulating event: only the latest one
-    # applies, so it lives in its own slot instead of being appended to scene_acc
-    # (turn 2 of an fp_to_tp / tp_to_fp pair would otherwise contradict turn 1).
-    perspective_clause = ""
-    perspective_hold = ""
     sched: list[str] = []
     for t in range(1, int(max_turn) + 1):
-        switched_this_turn = False
+        scene_extra: list[str] = []
+        perspective_extra: list[str] = []
+        camera_extra: list[str] = []
         for it in its:
             if int(it.get("turn", 0) or 0) != t:
                 continue
@@ -673,18 +666,14 @@ def _build_interaction_prompt_schedule(
             if not act:
                 continue
             if typ in ("event_edit", "subject_action"):
-                scene_acc.append(act)
+                scene_extra.append(act)
             elif typ == "perspective_switch":
-                camera_acc.append(act)
-                perspective_clause, perspective_hold = _perspective_switch_clauses(act)
-                switched_this_turn = True
-        if perspective_hold and not switched_this_turn:
-            perspective_clause = perspective_hold
-        scene_extra = " ".join(p for p in [*scene_acc, perspective_clause] if p)
+                camera_extra.append(act)
+                perspective_extra.append(_perspective_switch_clause(act))
         sched.append(
             _build_training_style_caption(
                 case, rewritten=rewritten,
-                scene_extra=scene_extra, camera_extra=" ".join(camera_acc),
+                scene_extra=" ".join([*scene_extra, *perspective_extra]), camera_extra=" ".join(camera_extra),
             )
         )
     return sched

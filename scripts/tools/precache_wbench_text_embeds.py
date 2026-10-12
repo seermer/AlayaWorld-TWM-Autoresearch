@@ -2,7 +2,7 @@
 
 Gemma-3-12B is 24GB in bf16, so on a 24GB card it cannot sit next to the DiT.
 The WBench prompt set is finite and fully enumerable ahead of time (one base
-caption plus one accumulated prompt-schedule entry per turn, per case), so we
+caption plus one prompt-schedule entry per turn, per case), so we
 encode it once here — with the text encoder spread over as many GPUs as it needs
 — and the generation run then serves every prompt from the on-disk cache with
 ALAYA_SKIP_TEXT_ENCODER=1.

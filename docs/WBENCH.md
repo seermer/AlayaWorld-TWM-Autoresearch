@@ -42,8 +42,8 @@ hf download pkqbajng/ViGeo1.1 --local-dir third_party/ViGeo/checkpoints/ViGeo1.1
 ```
 
 **Text-embedding cache** — Gemma-3-12B is 24GB in bf16 and cannot sit next to the
-DiT on a 24GB card. The WBench prompt set is finite (747 strings: one base caption
-plus one accumulated schedule entry per turn, plus the CFG negative prompt), so
+DiT on a 24GB card. The WBench prompt set is finite (one base caption per case, one schedule
+entry per turn, plus the CFG negative prompt), so
 encode it once up front and run generation with the encoder switched off:
 
 ```bash
@@ -98,7 +98,8 @@ WBench's `--gpus` defaults to every visible GPU, so pass it explicitly.
 | Change | Why |
 |---|---|
 | `alaya/data/wbench.py`: `include_non_navigation` | `WBenchNaviDataset` kept only the 158 cases with a W/A/S/D/arrow turn. The flag keeps all 289. |
-| `alaya/data/wbench.py`: `_perspective_switch_clauses` | `perspective_switch` actions are codes (`fp_to_tp`, `tp_to_tp: switch to follow ...`) and were appended to the `<camera>` block — which `_strip_camera()` deletes wholesale, so those 61 turns reached the model as no-ops. They are now rendered into the scene narrative using WBench's own `PERSPECTIVE_TYPE_DESC` strings verbatim (the same text its judge is shown), so no wording is invented. Only the newest switch applies (it is a state, not an accumulating event). |
+| `alaya/data/wbench.py`: `_build_interaction_prompt_schedule` | Each turn's prompt is the scene description plus that turn's own interaction, as in WBench's protocol (paper B.1.1; `src/models/base.py` `_build_turn_prompt`). The original adapter kept every earlier event and action sentence in all later turns. |
+| `alaya/data/wbench.py`: `_perspective_switch_clause` | `perspective_switch` actions are codes (`fp_to_tp`, `tp_to_tp: switch to follow ...`) and were appended to the `<camera>` block — which `_strip_camera()` deletes wholesale, so those 61 turns reached the model as no-ops. They are now rendered into the scene narrative using WBench's own `PERSPECTIVE_TYPE_DESC` strings verbatim (the same text its judge is shown), so no wording is invented. The sentence appears on the switching turn only. |
 | `alaya/data/wbench.py`: `_short_subject` article strip | `desc.lstrip("aA ")` strips a *character set*, not an article: "an elf ..." became "n elf ...". Affects 13 of the 289 cases. Only the `WBENCH_ACTION_CLAUSES` path consumes it. |
 | `alaya/model/loader.py`: `ALAYA_INIT_TRANSFORMER_ON_CPU` | 13B bf16 = 26GB does not fit unsharded on a 24GB card. Building on CPU lets FSDP move and shard the model one attention block at a time. |
 | `alaya/model/loader.py`: streaming state-dict reads | The LTX-2.3 release file is 43GB but only ~26GB of it is the video DiT. Reading tensor by tensor avoids materialising the audio branch, vocoder and VAE per rank. |
