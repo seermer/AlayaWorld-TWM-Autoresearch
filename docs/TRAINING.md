@@ -83,11 +83,10 @@ video follows. Stored in the same `captions/<id>.json`, next to the caption:
 
 ```json
 {
-  "caption": "Colonoscopy video inside a silicone colon phantom that turns into a black-and-white pencil sketch drawing partway through while the camera keeps moving.",
+  "caption": "A bright, open-plan living room with light beige carpet and white walls decorated with framed photographs and a round clock.",
   "segments": [
-    {"time_range_s": [0.0,    3.7083], "prompt": "Colonoscopy video recorded inside a silicone colon phantom: the colonoscope camera slowly pulls back and pushes forward through the glossy pink mucosal lumen, rolling as it moves."},
-    {"time_range_s": [3.7083, 5.0417], "prompt": "Colonoscopy video inside a silicone colon phantom that is smoothly transforming into a black-and-white pencil sketch drawing of the same colon while the camera keeps moving."},
-    {"time_range_s": [5.0417, 8.0],    "prompt": "A black-and-white pencil sketch drawing of the inside of a colon, with grainy paper texture and dark pencil strokes, as the camera slowly moves through the lumen."}
+    {"time_range_s": [0.0,    4.4167], "prompt": "A bright, open-plan living room with light beige carpet and white walls decorated with framed photographs and a round clock."},
+    {"time_range_s": [4.4167, 7.9583], "prompt": "A bright, open-plan living room with light beige carpet and white walls decorated with framed photographs and a round clock. Canny edge map."}
   ]
 }
 ```
@@ -185,7 +184,7 @@ built locally under `data/examples/`, and the recipes in `configs/examples/` poi
 | Format | Example recipe | Example data (local) |
 |---|---|---|
 | `video_caption_camera` | [`configs/examples/finetune_video_caption_camera.yaml`](../configs/examples/finetune_video_caption_camera.yaml) | `data/examples/video_caption_camera`: 6 SpatialVID-HQ clips, 9-15 s each at 24-50 fps, with captions and per-frame poses |
-| `video_timed_prompts_camera` | [`configs/examples/finetune_video_timed_prompts_camera.yaml`](../configs/examples/finetune_video_timed_prompts_camera.yaml) | `data/examples/video_timed_prompts_camera`: 6 C3VD colonoscopy clips, 8 s each, that turn into a pencil sketch during round 3 (the timed-prompt example above) |
+| `video_timed_prompts_camera` | [`configs/examples/finetune_video_timed_prompts_camera.yaml`](../configs/examples/finetune_video_timed_prompts_camera.yaml) | `data/examples/video_timed_prompts_camera`: 6 DL3DV clips, 5-10 s each, that turn into a canny edge map or from a canny edge map into a depth map where the text changes (6 clips of the overfit test's dataset, section 4) |
 | `video_caption_static` | [`configs/examples/finetune_video_caption_static.yaml`](../configs/examples/finetune_video_caption_static.yaml) | `data/examples/video_caption_static`: 6 clips, 10 s each, two from each of three CDnet 2012 fixed-camera scenes (highway, office, peopleInShade) |
 
 ### 1.4 Check the dataset
@@ -201,7 +200,7 @@ python scripts/tools/check_dataset.py --config configs/examples/finetune_video_t
 ```
 layout: 57 frames per window at 24 fps (25 history + 32 target)
 
-[OK] example (video_timed_prompts_camera) at data/examples/video_timed_prompts_camera: 6 clips, 0.8 min, 18 prompts, 0 errors, 0 warnings
+[OK] example (video_timed_prompts_camera) at data/examples/video_timed_prompts_camera: 6 clips, 0.8 min, 12 prompts, 0 errors, 0 warnings
 ```
 
 It exits 1 on any error.
@@ -277,12 +276,12 @@ three example datasets:
 data:
   datasets:
     cam:    {root: data/examples/video_caption_camera,       format: video_caption_camera,       weight: 1.0}
-    pencil: {root: data/examples/video_timed_prompts_camera, format: video_timed_prompts_camera, weight: 2.0}
+    timed:  {root: data/examples/video_timed_prompts_camera, format: video_timed_prompts_camera, weight: 2.0}
     static: {root: data/examples/video_caption_static,       format: video_caption_static,       weight: 1.0}
 ```
 
 - **Weights are sampling probabilities.** Each draw picks a dataset with probability
-  `weight / sum(weights)` (25% cam, 50% pencil, 25% static here), whatever the dataset sizes.
+  `weight / sum(weights)` (25% cam, 50% timed, 25% static here), whatever the dataset sizes.
   A small dataset with a large weight is repeated to reach its share, so it overfits sooner.
 - **One epoch** is sized so the dataset needing the most draws for its share is seen about once:
   `max(clips / share)` windows, here max(6/0.25, 6/0.5, 6/0.25) = 24.
@@ -322,7 +321,7 @@ ones you are most likely to change:
 |---|---|---|
 | `run.name`, `run.output_dir`, `run.log_dir` | per recipe | give every run its own; checkpoints and logs go here |
 | `data.datasets` | one dataset | section 2.2 |
-| `optimizer.lr` | `5.0e-05` | LoRA learning rate. The 29-clip C3VD overfit test used `2.0e-04` for 300 steps |
+| `optimizer.lr` | `5.0e-05` | LoRA learning rate. The overfit test (section 4) used `1.0e-04` for 400 steps |
 | `optimizer.max_steps` | `300` | optimizer steps. Windows seen = steps x GPUs x `batch_size` x `grad_accum_steps`. Training stops at `max_steps` or after `optimizer.epochs` (5000) epochs, whichever comes first |
 | `optimizer.grad_accum_steps` | `4` | effective batch = GPUs x `batch_size` x this; `batch_size` must stay 1 on 24GB |
 | `optimizer.warmup_steps` | `50` | linear warmup |
@@ -446,8 +445,33 @@ this guide:
 3. A two-step training run (`max_steps: 2`, `grad_accum_steps: 1`) trains and writes `checkpoint-2`
    with `lora.safetensors` and `history_encoder.pt`, in about 7 minutes including model loading.
 
-The `video_timed_prompts_camera` format was run in both prompt modes. Per-chunk windows were
-compared against the hand-cut round windows of the C3VD pencil-sketch overfit experiment that
-trained successfully: same frames (a one-frame shift is 2-13x further off) and identical
-prompts. The loader logic is covered by `tests/test_standard_dataset.py` and
+The loader logic is covered by `tests/test_standard_dataset.py` and
 `tests/test_standard_check.py`.
+
+### 4.1 Overfit test: canny and depth
+
+An end-to-end test that training teaches the model to follow a text change during a rollout.
+[`scripts/overfit/canny_depth.sh`](../scripts/overfit/canny_depth.sh) runs all of it on 4 GPUs.
+
+- **Data:** 100 clips from 100 DL3DV scenes (`configs/overfit/canny_depth_scenes.json`), 89 to 265
+  frames each at 24 fps and 960x544, with ViGeo poses. In 50 the raw footage turns into its canny
+  edge map, in 50 the canny edge map turns into the depth map. Each clip has two prompts: the
+  scene description (`configs/overfit/canny_depth_captions.json`), plus "Canny edge map." or
+  "Depth map." while the picture shows one. The text changes on the second prompt's first frame,
+  and the picture cross-fades over the next 24 frames.
+- **Training:** [`configs/overfit/canny_depth_train.yaml`](../configs/overfit/canny_depth_train.yaml),
+  the low-compute recipe at 544x960, LoRA rank 64, lr 1e-4, 400 steps.
+- **Rendering:** [`configs/overfit/canny_depth_render.yaml`](../configs/overfit/canny_depth_render.yaml),
+  the 4-step adapter with the trained LoRA stacked on it, on 3 DL3DV scenes that were not trained
+  on, as WBench cases with the camera held and three turns: no transform sentence; raw, then
+  canny, then depth; and canny, then depth, starting from the canny version of the first frame.
+
+Result, judged by eye on the 3 hold-out scenes (rendered with an empty negative prompt):
+- Without a transform sentence the video stays raw footage.
+- Raw to canny follows the text within the first second of the turn.
+- Canny to depth works in some cases and not well.
+- The chain raw to canny to depth, which no training clip contains, nearly never reaches depth.
+
+The dataset, the checkpoint and the videos of that run are kept locally in
+`../experiments/2026-10-12_sampling_experiment/` (`stage3/dataset`,
+`train/mixed/outputs/checkpoint-400`, `stage6/mixed/videos/case_91*_combined.mp4`).

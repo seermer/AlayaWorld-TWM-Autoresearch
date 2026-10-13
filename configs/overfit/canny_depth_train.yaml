@@ -1,0 +1,225 @@
+# Overfit test, training: LoRA on 100 DL3DV clips whose picture and text change partway through,
+# raw footage to a canny edge map or a canny edge map to a depth map
+# (data/overfit/canny_depth/dataset, video_timed_prompts_camera format).
+# The low-compute recipe (configs/stage2b_arsft_lowcompute.yaml) at 544x960 with lr 1e-4 for 400 steps.
+# Run the whole experiment with scripts/overfit/canny_depth.sh.
+anti_drift:
+  drift:
+    clean_prob: 0.1
+    condition_prefix_last_context_frame_prob: 0.0
+    corrupt_ratio: 0.333
+    downsample_max: 1.0
+    downsample_min: 0.9
+    enabled: true
+    history_corrupt_prob: null
+    keep_x0: false
+    noise_mode_prob: 0.9
+    saturation_clean_prob: 0.1
+  error_bank:
+    bank_skip_prob: 0.2
+    buffer_k: 500
+    clean_buffer_update_prob: 0.1
+    enabled: true
+    gamma: 1.0
+    history_prob: 0.0
+    modulate_factor: 0.2
+    nearby_prob: 0.9
+    num_grids: 50
+    replacement_strategy: l2_batch
+    spatial_prob: 0.9
+    target_latent_prob: 0.9
+    warmup_iter: 240
+control:
+  action_learning_rate: null
+  candidates:
+  - []
+  probs:
+  - 1.0
+data:
+  abstract_caption_prob: 0.0
+  camera_norm_mode: none
+  camera_post_relic_scale: 1.0
+  datasets:
+    canny_depth:
+      format: video_timed_prompts_camera
+      root: data/overfit/canny_depth/dataset
+      weight: 1.0
+  require_camera: true
+  sekai_game_jsonl: null
+  sekai_game_pose_subdir: null
+  skip_file_check: true
+  sources: {}
+  use_cache: true
+layout:
+  condition:
+    i2v_prob: 1.0
+    type: nearby
+    v2v_prob: 0.0
+    v2v_ratio_max: 0.6
+    v2v_ratio_min: 0.2
+  history_latent_frames: 4
+  k4_use_valid_starts: false
+  max_gap_sec: 0.0
+  output:
+    latent_frames:
+    - 4
+    probs:
+    - 1.0
+  sink_latent_frames: 1
+  sink_remote: false
+  sink_remote_min_distance: 8
+lora:
+  alpha: 64
+  enabled: true
+  rank: 64
+  targets:
+  - attn1.to_q
+  - attn1.to_k
+  - attn1.to_v
+  - attn1.to_out.0
+  - attn2.to_q
+  - attn2.to_k
+  - attn2.to_v
+  - attn2.to_out.0
+  - ff.net.0.proj
+  - ff.net.2
+  train: true
+memory:
+  compress_h: 2
+  compress_t: 1
+  compress_w: 2
+  drop_prob: 0.5
+  gate_init: 0.5
+  lr_compress_h: 2
+  lr_compress_t: 1
+  lr_compress_w: 2
+  train: true
+  use_lr_branch: true
+  use_self_attn: true
+next_forcing:
+  enabled: false
+  fuse_hidden_mult: 1.0
+  hook_layers:
+  - 8
+  - 20
+  - 32
+  - 44
+  loss_weight: 0.5
+  num_blocks: 3
+  sigma_shift: 10.0
+optimizer:
+  batch_size: 1
+  checkpoint_steps: 400
+  epochs: 5000
+  grad_accum_steps: 4
+  log_steps: 1
+  lr: 0.0001
+  max_checkpoints: 1
+  max_grad_norm: 5.0
+  max_steps: 400
+  warmup_steps: 65
+  weight_decay: 0.001
+paths:
+  annotation_base_dir: data/Annotation
+  base_transformer: weights/ltx-2.3/ltx-2.3-22b-dev.safetensors
+  gemma: weights/ltx-2.3/google/gemma-3-12b-it-qat-q4_0-unquantized
+  history_encoder: weights/alaya-world-ar/history_encoder.pt
+  resume_checkpoint: weights/alaya-world-ar
+  resume_reset_step: true
+  vae: weights/ltx-2.3/ltx-2.3-22b-dev.safetensors
+  video_base_dir: data/Video
+run:
+  log_dir: ./logs/overfit_canny_depth_train
+  name: overfit_canny_depth_train
+  output_dir: ./outputs/overfit_canny_depth/train
+  seed: 42
+runtime:
+  attention_type: flash_attention_3
+  compact_spatial_tokens: true
+  dataloader_pin_memory: false
+  dataloader_prefetch_factor: 2
+  dataloader_workers: 2
+  dtype: bf16
+  fsdp: true
+  gradient_checkpointing: true
+  norm_by_fps: true
+  norm_by_max_frames: true
+  positional_embedding_max_pos: 20,2048,2048
+  precache_text_embeds: false
+  text_embed_cache_dir: cache/text_embed_overfit_canny_depth
+  text_embed_cache_entries: 4096
+  vae_chunk_size: 33
+  vae_decode_chunk_latents: 161
+  vae_latent_cache_dir: null
+sample:
+  fps: 24.0
+  height: 544
+  temporal_stride: 8
+  width: 960
+spatial_memory:
+  cache_stride: 1
+  constant_depth: 1.0
+  context_mode: vigeo_prefix_last_frame
+  depth_backend: vigeo
+  downsample: 4
+  dropout: 0.0
+  enabled: true
+  include_nearby: true
+  include_sink: false
+  num_context_frames: 10
+  require_full_context: true
+  retrieval_depth_threshold: 0.1
+  retrieval_max_coverage: true
+  retrieval_views: 1
+  skip_recent_latents: 1
+  use_warped_context: true
+  vigeo_cache_budget: 65536
+  vigeo_checkpoint: third_party/ViGeo/checkpoints/ViGeo1.1
+  vigeo_device: auto
+  vigeo_generated_source_pose_mode: aligned_vigeo
+  vigeo_num_tokens: 1369
+  vigeo_prefix_frames: 24
+  vigeo_repo_path: third_party/ViGeo
+  vigeo_single_frame_scale: 1.0
+  vigeo_stream_chunk_size: 16
+training:
+  adaptive_shift_frame_hi: 121
+  adaptive_shift_frame_lo: 8
+  adaptive_shift_m_hi: 30.0
+  adaptive_shift_m_lo: 3.0
+  adaptive_sigma_shift: true
+  mode: lora
+validation:
+  before_train: true
+  cfg_scale: 3.0
+  dynamic_rounds: true
+  enabled: false
+  first_step: 0
+  interval: 600
+  max_samples: 2
+  modes:
+    i2v_action_rollout_example:
+      control: []
+      dataset:
+        source: canny_depth
+      layout:
+        condition: i2v
+        condition_latent_frames: 1
+        height: 544
+        history_latent_frames: 4
+        max_gap_sec: 0.0
+        output_latent_frames: 4
+        width: 960
+      memory_start_round: 1
+      rollout_rounds: 5
+  rescale_scale: 0.7
+  sampling_steps: 30
+  save_joystick: true
+  save_videos: true
+  scheduler: shift
+  stg_blocks:
+  - 28
+  stg_scale: 1.0
+  video_history_latent_frames: 4
+  vigeo_handoff_mode: direct_latent
+  vigeo_pred_decode_mode: full

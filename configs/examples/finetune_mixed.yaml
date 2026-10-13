@@ -22,13 +22,13 @@ data:
   sources: {}
   # Standard-format datasets: name -> root, format, weight.
   # Each draw picks a dataset with probability weight / sum(weights), then a clip from it;
-  # small datasets are repeated to reach their share. Here: 25% cam, 50% pencil, 25% static.
+  # small datasets are repeated to reach their share. Here: 25% cam, 50% timed, 25% static.
   datasets:
     cam:
       root: data/examples/video_caption_camera
       format: video_caption_camera
       weight: 1.0
-    pencil:
+    timed:
       root: data/examples/video_timed_prompts_camera
       format: video_timed_prompts_camera
       weight: 2.0
