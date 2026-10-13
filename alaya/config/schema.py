@@ -84,7 +84,7 @@ class DataConfig:
     # Truncate each source to N samples (None = all); handy for quick benchmarks
     max_samples_per_source: int | None = None
     # Datasets in a standard on-disk format, declared here instead of registered in
-    # code: name -> {root, format, prompt_mode, weight}. See alaya/data/standard.py.
+    # code: name -> {root, format, weight}. See alaya/data/standard.py.
     datasets: dict[str, dict] = field(default_factory=dict)
 
 

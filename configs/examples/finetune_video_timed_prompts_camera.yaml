@@ -19,15 +19,13 @@ paths:
 data:
   # Built-in sources registered in code; none here.
   sources: {}
-  # Standard-format datasets: name -> root, format, [prompt_mode], weight.
+  # Standard-format datasets: name -> root, format, weight.
   datasets:
     example:
       root: data/examples/video_timed_prompts_camera
       format: video_timed_prompts_camera
-      # per_chunk: windows on rollout-round boundaries, so the model learns a prompt
-      # switch at the round where it happens. segment: each window sits inside one
-      # prompt's time range. Same data, see docs/TRAINING.md section 2.4.
-      prompt_mode: per_chunk
+      # Each window is trained with the prompt its 32 target frames lie under;
+      # see docs/TRAINING.md section 2.4.
       weight: 1.0
   use_cache: true
   skip_file_check: true

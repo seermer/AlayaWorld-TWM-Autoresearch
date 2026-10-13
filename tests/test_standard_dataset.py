@@ -13,7 +13,6 @@ import yaml
 
 from alaya.config.schema import TrainConfig
 from alaya.data.standard import (
-    chunk_windows,
     load_timed_prompts,
     parse_dataset_specs,
     register_datasets,
@@ -48,7 +47,7 @@ def _write_clip(root, clip_id, *, fps=30.0, frames=240, pose=True, caption=None)
         np.savez(root / "poses" / f"{clip_id}.npz", cam_c2w=c2w, intrinsics=k)
 
 
-# Prompt boundaries on rollout-round boundaries: (25 + 32*2)/24 and (25 + 32*3)/24.
+# "transforming" lasts exactly one 32-frame target.
 PENCIL = {
     "caption": "a colon that turns into a pencil sketch",
     "segments": [
@@ -95,14 +94,14 @@ def test_parse_accepts_each_format(tmp_path):
     specs = parse_dataset_specs(
         {
             "a": {"root": str(tmp_path), "format": "video_caption_camera"},
-            "b": {"root": str(tmp_path), "format": "video_timed_prompts_camera", "prompt_mode": "per_chunk", "weight": 2.0},
+            "b": {"root": str(tmp_path), "format": "video_timed_prompts_camera", "weight": 2.0},
             "c": {"root": str(tmp_path), "format": "video_caption_static"},
         }
     )
-    assert [(s.name, s.format, s.weight, s.prompt_mode) for s in specs] == [
-        ("a", "video_caption_camera", 1.0, None),
-        ("b", "video_timed_prompts_camera", 2.0, "per_chunk"),
-        ("c", "video_caption_static", 1.0, None),
+    assert [(s.name, s.format, s.weight) for s in specs] == [
+        ("a", "video_caption_camera", 1.0),
+        ("b", "video_timed_prompts_camera", 2.0),
+        ("c", "video_caption_static", 1.0),
     ]
 
 
@@ -111,9 +110,7 @@ def test_parse_accepts_each_format(tmp_path):
     [
         ({"format": "video_caption_camera"}, "root"),
         ({"root": "x", "format": "video_only"}, "format"),
-        ({"root": "x", "format": "video_timed_prompts_camera"}, "prompt_mode"),
-        ({"root": "x", "format": "video_timed_prompts_camera", "prompt_mode": "random"}, "prompt_mode"),
-        ({"root": "x", "format": "video_caption_camera", "prompt_mode": "segment"}, "prompt_mode"),
+        ({"root": "x", "format": "video_timed_prompts_camera", "prompt_mode": "mixed"}, "prompt_mode"),
         ({"root": "x", "format": "video_caption_camera", "weight": -1}, "weight"),
         ({"root": "x", "format": "video_caption_camera", "colour": 1}, "colour"),
     ],
@@ -150,11 +147,8 @@ def test_source_config_per_format(tmp_path):
     static = cfg_for(format="video_caption_static")
     assert static["has_camera"] and static["static_camera"]
 
-    segment = cfg_for(format="video_timed_prompts_camera", prompt_mode="segment")
-    assert segment["use_segment_caption"] and segment["segment_caption_field"] == "prompt"
-
-    chunk = cfg_for(format="video_timed_prompts_camera", prompt_mode="per_chunk")
-    assert not chunk["use_segment_caption"] and chunk["timed_prompt_mode"] == "per_chunk"
+    timed = cfg_for(format="video_timed_prompts_camera")
+    assert not timed["use_segment_caption"] and timed["timed_prompt_mode"] == "mixed"
 
 
 def test_register_datasets_adds_source_configs(tmp_path):
@@ -205,43 +199,12 @@ def test_load_timed_prompts_sorts_by_start(tmp_path):
     assert [p for _, _, p in load_timed_prompts(str(path))] == ["raw", "transforming", "sketch"]
 
 
-def test_chunk_windows_follow_rollout_rounds():
-    prompts = [(a, b, p) for (a, b), p in ((s["time_range_s"], s["prompt"]) for s in PENCIL["segments"])]
-    windows = chunk_windows(
-        prompts, available_frames=192, window_frames=WINDOW, prefix_frames=PREFIX, chunk_frames=CHUNK, fps=FPS
-    )
-    # 8 s at 24 fps = 192 frames -> rounds start at 0, 32, 64, 96, 128 (128 + 57 = 185 <= 192).
-    assert windows == [(0, "raw"), (32, "raw"), (64, "transforming"), (96, "sketch"), (128, "sketch")]
-
-
-def test_chunk_windows_skip_rounds_without_a_prompt():
-    windows = chunk_windows(
-        [(0.0, 3.0, "only")], available_frames=192, window_frames=WINDOW, prefix_frames=PREFIX, chunk_frames=CHUNK, fps=FPS
-    )
-    # Target midpoints: round 1 at (25+16)/24 = 1.71 s, round 2 at 3.04 s (uncovered).
-    assert windows == [(0, "only")]
-
-
 # ---------------------------------------------------------------- loader
-
-
-def test_loader_per_chunk_windows_match_rounds(tmp_path):
-    _write_clip(tmp_path, "clip", caption=PENCIL)
-    ds = _dataset("t_chunk", {"root": str(tmp_path), "format": "video_timed_prompts_camera", "prompt_mode": "per_chunk"})
-    seen = set()
-    for epoch in range(40):
-        ds.set_epoch(epoch)
-        item = ds[0]
-        pixels, caption, cam_c2w, frame_start = item[0], item[2], item[4], item[11]
-        assert pixels.shape[0] == WINDOW and cam_c2w.shape[0] == WINDOW
-        seen.add((frame_start, caption))
-    # 30 fps source: round r starts at native frame 40*(r-1).
-    assert seen == {(0, "raw"), (40, "raw"), (80, "transforming"), (120, "sketch"), (160, "sketch")}
 
 
 def test_loader_mixed_windows_keep_the_target_inside_one_prompt(tmp_path):
     _write_clip(tmp_path, "clip", caption=PENCIL)
-    ds = _dataset("t_mixed", {"root": str(tmp_path), "format": "video_timed_prompts_camera", "prompt_mode": "mixed"})
+    ds = _dataset("t_mixed", {"root": str(tmp_path), "format": "video_timed_prompts_camera"})
     ranges = {s["prompt"]: s["time_range_s"] for s in PENCIL["segments"]}
     onsets, crossing = set(), 0
     for epoch in range(200):
@@ -256,23 +219,6 @@ def test_loader_mixed_windows_keep_the_target_inside_one_prompt(tmp_path):
         crossing += start / 30 < lo - 1 / 24
     # "transforming" is exactly one target long: its only window starts on its first frame.
     assert onsets == {"transforming", "sketch"} and crossing > 0
-
-
-def test_loader_segment_windows_stay_inside_one_prompt(tmp_path, monkeypatch):
-    monkeypatch.setenv("LTX_OVERALL_CAPTION_PROB", "0.0")
-    _write_clip(tmp_path, "clip", caption=PENCIL)
-    ds = _dataset("t_seg", {"root": str(tmp_path), "format": "video_timed_prompts_camera", "prompt_mode": "segment"})
-    ranges = {s["prompt"]: s["time_range_s"] for s in PENCIL["segments"]}
-    captions = set()
-    for epoch in range(40):
-        ds.set_epoch(epoch)
-        item = ds[0]
-        caption, start, end = item[2], item[11], item[12]
-        lo, hi = ranges[caption]
-        assert lo * 30 - 1 <= start and end <= hi * 30 + 1
-        captions.add(caption)
-    # "transforming" lasts 1.33 s, shorter than the 2.375 s window, so it is never drawn.
-    assert captions == {"raw", "sketch"}
 
 
 def test_loader_static_camera_is_identity(tmp_path):
@@ -306,14 +252,14 @@ def _precache_module():
 def test_precache_accepts_timed_prompts(tmp_path, monkeypatch):
     monkeypatch.delenv("LTX_SEGMENT_CONCAT_PROB", raising=False)
     tool = _precache_module()
-    for mode in ("segment", "per_chunk"):
-        cfg = _recipe({"timed": {"root": str(tmp_path), "format": "video_timed_prompts_camera", "prompt_mode": mode}})
-        tool._assert_finite_prompt_set(cfg)
+    cfg = _recipe({"timed": {"root": str(tmp_path), "format": "video_timed_prompts_camera"}})
+    tool._assert_finite_prompt_set(cfg)
 
 
 def test_precache_refuses_segment_concatenation(tmp_path, monkeypatch):
     monkeypatch.setenv("LTX_SEGMENT_CONCAT_PROB", "0.5")
-    cfg = _recipe({"timed": {"root": str(tmp_path), "format": "video_timed_prompts_camera", "prompt_mode": "segment"}})
+    cfg = _recipe({})
+    cfg.data.sources = {"sekai_real_hq": 1.0}
     with pytest.raises(SystemExit, match="LTX_SEGMENT_CONCAT_PROB"):
         _precache_module()._assert_finite_prompt_set(cfg)
 
@@ -322,7 +268,7 @@ def test_enumerated_prompts_cover_timed_captions(tmp_path):
     from alaya.data.text_embed_cache import enumerate_all_prompts
 
     _write_clip(tmp_path, "clip", frames=10, caption=PENCIL)
-    cfg = _recipe({"t_enum": {"root": str(tmp_path), "format": "video_timed_prompts_camera", "prompt_mode": "per_chunk"}})
+    cfg = _recipe({"t_enum": {"root": str(tmp_path), "format": "video_timed_prompts_camera"}})
     ds = _dataset("t_enum", cfg.data.datasets["t_enum"])
     prompts = set(enumerate_all_prompts(cfg, ds))
     assert {"raw", "transforming", "sketch", PENCIL["caption"]} <= prompts
@@ -345,18 +291,16 @@ def test_dataloader_with_fewer_samples_than_ranks_fails_loudly():
     assert _require_batches(loader, world_size=4, batch_size=1) is loader
 
 
-def test_loader_per_chunk_accepts_ntsc_24fps(tmp_path):
+def test_loader_timed_prompts_accept_ntsc_24fps(tmp_path):
     _write_clip(tmp_path, "clip", fps=24000 / 1001, frames=192, caption=PENCIL)
-    ds = _dataset("t_ntsc", {"root": str(tmp_path), "format": "video_timed_prompts_camera", "prompt_mode": "per_chunk"})
+    ds = _dataset("t_ntsc", {"root": str(tmp_path), "format": "video_timed_prompts_camera"})
     seen = set()
     for epoch in range(40):
         ds.set_epoch(epoch)
         item = ds[0]
         assert item[0].shape[0] == WINDOW
-        seen.add((item[11], item[2]))
-    # 192 frames at 23.976 fps give 191 frames at 24 fps, so rounds 1-5 still fit (128 + 57 <= 191).
-    assert {caption for _, caption in seen} == {"raw", "transforming", "sketch"}
-    assert sorted(start for start, _ in seen) == [0, 31, 63, 95, 127]
+        seen.add(item[2])
+    assert seen == {"raw", "transforming", "sketch"}
 
 
 def test_precache_includes_literal_prompt_schedule_entries(tmp_path):
@@ -381,24 +325,21 @@ def test_enumerated_prompts_include_an_empty_negative_prompt(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "fmt, mode, caption",
+    "fmt, caption",
     [
-        ("video_caption_camera", None, None),
-        ("video_caption_static", None, None),
-        ("video_timed_prompts_camera", "per_chunk", PENCIL),
-        ("video_timed_prompts_camera", "segment", PENCIL),
+        ("video_caption_camera", None),
+        ("video_caption_static", None),
+        ("video_timed_prompts_camera", PENCIL),
     ],
 )
-def test_every_drawn_caption_is_enumerated_for_the_cache(tmp_path, fmt, mode, caption):
+def test_every_drawn_caption_is_enumerated_for_the_cache(tmp_path, fmt, caption):
     """Training reads prompts from the cache with the text encoder unloaded, so any
     caption the loader can draw but the precache does not enumerate kills the run."""
     from alaya.data.text_embed_cache import enumerate_all_prompts
 
     _write_clip(tmp_path, "clip", pose=(fmt != "video_caption_static"), caption=caption)
     raw = {"root": str(tmp_path), "format": fmt}
-    if mode:
-        raw["prompt_mode"] = mode
-    name = f"t_cov_{fmt}_{mode}"
+    name = f"t_cov_{fmt}"
     cfg = _recipe({name: raw})
     ds = _dataset(name, raw)
     cached = set(enumerate_all_prompts(cfg, ds))

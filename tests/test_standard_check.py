@@ -12,11 +12,8 @@ from test_standard_dataset import PENCIL, _write_clip
 LAYOUT = dict(fps=24.0, window_frames=57, prefix_frames=25, chunk_frames=32)
 
 
-def _check(root, fmt, mode=None):
-    raw = {"root": str(root), "format": fmt}
-    if mode:
-        raw["prompt_mode"] = mode
-    (spec,) = parse_dataset_specs({"d": raw})
+def _check(root, fmt):
+    (spec,) = parse_dataset_specs({"d": {"root": str(root), "format": fmt}})
     return check_dataset(spec, **LAYOUT)
 
 
@@ -34,8 +31,8 @@ def test_clean_datasets_pass(tmp_path):
     assert report.errors == [] and report.warnings == []
 
     _write_clip(tmp_path / "timed", "a", caption=PENCIL)
-    report = _check(tmp_path / "timed", "video_timed_prompts_camera", "per_chunk")
-    assert report.errors == [] and report.windows == 5
+    report = _check(tmp_path / "timed", "video_timed_prompts_camera")
+    assert report.errors == [] and report.windows == 3
 
 
 def test_missing_root_or_videos(tmp_path):
@@ -96,7 +93,7 @@ def test_static_ignores_poses_with_warning(tmp_path):
 
 def test_timed_prompts_need_segments(tmp_path):
     _write_clip(tmp_path, "a", caption={"caption": "x"})
-    assert _has(_check(tmp_path, "video_timed_prompts_camera", "segment").errors, "segments")
+    assert _has(_check(tmp_path, "video_timed_prompts_camera").errors, "segments")
 
 
 def test_timed_prompts_out_of_range_and_overlap(tmp_path):
@@ -108,29 +105,30 @@ def test_timed_prompts_out_of_range_and_overlap(tmp_path):
         ],
     }
     _write_clip(tmp_path, "a", caption=caption)
-    errors = _check(tmp_path, "video_timed_prompts_camera", "segment").errors
+    errors = _check(tmp_path, "video_timed_prompts_camera").errors
     assert _has(errors, "overlap") and _has(errors, "past the end")
 
 
-def test_segment_mode_warns_about_short_segments(tmp_path):
-    _write_clip(tmp_path, "a", caption=PENCIL)
-    report = _check(tmp_path, "video_timed_prompts_camera", "segment")
-    assert report.errors == [] and _has(report.warnings, "transforming")
-    assert report.windows == 2  # "raw" and "sketch" are long enough to hold a window
+def _timed(*bounds):
+    return {"caption": "x", "segments": [{"time_range_s": [lo / 24, hi / 24], "prompt": f"p{i}"}
+                                         for i, (lo, hi) in enumerate(bounds)]}
 
 
-def test_per_chunk_needs_aligned_boundaries(tmp_path):
-    caption = {
-        "caption": "x",
-        "segments": [
-            {"time_range_s": [0.0, 4.0], "prompt": "a"},
-            {"time_range_s": [4.0, 8.0], "prompt": "b"},
-        ],
-    }
-    _write_clip(tmp_path, "a", caption=caption)
-    errors = _check(tmp_path, "video_timed_prompts_camera", "per_chunk").errors
-    # 4.0 s = frame 96; the nearest round boundaries are frames 89 and 121.
-    assert _has(errors, "4.000") and _has(errors, "3.708")
+def test_every_prompt_must_be_long_enough_to_train(tmp_path):
+    _write_clip(tmp_path / "ok", "a", caption=_timed((0, 57), (57, 89), (89, 192)))
+    assert _check(tmp_path / "ok", "video_timed_prompts_camera").errors == []
+
+    # The first prompt needs 25 history + 32 target frames, a later one 32.
+    _write_clip(tmp_path / "short", "a", caption=_timed((0, 56), (56, 87), (87, 192)))
+    report = _check(tmp_path / "short", "video_timed_prompts_camera")
+    assert _has(report.errors, "'p0' lasts 56 frames") and _has(report.errors, "at least 57")
+    assert _has(report.errors, "'p1' lasts 31 frames") and _has(report.errors, "at least 32")
+    assert len(report.errors) == 2 and report.windows == 1
+
+
+def test_first_prompt_must_start_at_zero(tmp_path):
+    _write_clip(tmp_path, "a", caption=_timed((12, 96), (96, 192)))
+    assert _has(_check(tmp_path, "video_timed_prompts_camera").errors, "must start at 0")
 
 
 def test_layout_from_lowcompute_recipe(tmp_path):

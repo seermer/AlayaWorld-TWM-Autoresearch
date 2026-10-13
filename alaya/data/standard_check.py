@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from alaya.data.standard import FPS_TOLERANCE, DatasetSpec, chunk_windows, mixed_windows
+from alaya.data.standard import FPS_TOLERANCE, DatasetSpec, mixed_windows
 
 _ROTATION_TOL = 1e-2
 _PRINCIPAL_POINT_TOL = 0.05
@@ -110,38 +110,19 @@ def _check_clip(spec, clip_id, report, *, camera, fps, window_frames, prefix_fra
     if prompts is None:
         return
     where = os.path.join(spec.root, "captions", f"{clip_id}.json")
-    if spec.prompt_mode == "segment":
-        window_s = window_frames / fps
-        usable = [p for p in prompts if p[1] - p[0] >= window_s]
-        for lo, hi, text in prompts:
-            if hi - lo < window_s:
-                report.warnings.append(
-                    f"{where}: segment {text[:40]!r} lasts {hi - lo:.2f} s < one window ({window_s:.3f} s), "
-                    "so segment mode never trains on it"
-                )
-        report.windows += len(usable)
-    elif spec.prompt_mode == "mixed":
-        windows = mixed_windows(prompts, available_frames=available, window_frames=window_frames,
-                                prefix_frames=prefix_frames, chunk_frames=chunk_frames, fps=fps)
-        if not windows:
-            report.errors.append(f"{where}: no prompt is long enough for a training target, so mixed has nothing to train on")
-        report.windows += len(windows)
-    else:
-        for boundary in sorted({b for lo, hi, _ in prompts for b in (lo, hi) if 1e-6 < b < duration - 1e-6}):
-            frame = boundary * fps
-            k = round((frame - prefix_frames) / chunk_frames)
-            if abs(frame - (prefix_frames + k * chunk_frames)) > 0.5:
-                below = prefix_frames + max(0, int((frame - prefix_frames) // chunk_frames)) * chunk_frames
-                report.errors.append(
-                    f"{where}: prompt boundary {boundary:.3f} s is not on a rollout round boundary; nearest are "
-                    f"{below / fps:.3f} s and {(below + chunk_frames) / fps:.3f} s "
-                    f"({prefix_frames}/{fps:g} s + k*{chunk_frames}/{fps:g} s)"
-                )
-        windows = chunk_windows(prompts, available_frames=available, window_frames=window_frames,
-                                prefix_frames=prefix_frames, chunk_frames=chunk_frames, fps=fps)
-        if not windows:
-            report.errors.append(f"{where}: no rollout round has a prompt, so per_chunk has nothing to train on")
-        report.windows += len(windows)
+    if round(prompts[0][0] * fps) != 0:
+        report.errors.append(f"{where}: the first prompt starts at {prompts[0][0]:.3f} s; it must start at 0")
+    for lo, hi, text in prompts:
+        if mixed_windows([(lo, hi, text)], available_frames=available, window_frames=window_frames,
+                         prefix_frames=prefix_frames, chunk_frames=chunk_frames, fps=fps):
+            report.windows += 1
+            continue
+        begin = round(lo * fps)
+        need = chunk_frames + max(0, prefix_frames - begin)
+        report.errors.append(
+            f"{where}: prompt {text[:40]!r} lasts {min(round(hi * fps), available) - begin} frames at {fps:g} fps; "
+            f"a prompt starting at frame {begin} needs at least {need} to be trained on"
+        )
 
 
 def _check_caption(spec, clip_id, report):

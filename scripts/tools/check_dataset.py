@@ -39,14 +39,10 @@ def main() -> int:
     failed = False
     for spec in specs:
         report = check_dataset(spec, **layout)
-        mode = f", prompt_mode={spec.prompt_mode}" if spec.prompt_mode else ""
         status = "FAIL" if report.errors else "OK"
-        unit = {"segment": "segments long enough for a window", "per_chunk": "round-aligned windows",
-                "mixed": "prompts long enough for a target"}.get(
-            spec.prompt_mode, "usable clips"
-        )
+        unit = "prompts" if spec.format == "video_timed_prompts_camera" else "usable clips"
         print(
-            f"\n[{status}] {spec.name} ({spec.format}{mode}) at {spec.root}: {report.clips} clips, "
+            f"\n[{status}] {spec.name} ({spec.format}) at {spec.root}: {report.clips} clips, "
             f"{report.seconds / 60:.1f} min, {report.windows} {unit}, "
             f"{len(report.errors)} errors, {len(report.warnings)} warnings"
         )

@@ -1125,37 +1125,6 @@ class MultiSourceVideoDataset(Dataset):
                 seg_frame_low = seg_frame_high = None
                 _overall_caption_text = None
 
-        # === Per-chunk timed prompts: windows on rollout-round boundaries ===
-        _per_chunk = config.get('timed_prompt_mode') == 'per_chunk' and self.random_frames
-        if _per_chunk:
-            from alaya.data.standard import FPS_TOLERANCE, chunk_windows, load_timed_prompts
-            if video_fps < self.target_fps * (1.0 - FPS_TOLERANCE):
-                raise RuntimeError(
-                    f"per_chunk prompts need video fps >= {self.target_fps}, got {video_fps:.2f}: {video_path}"
-                )
-            if self.max_frames is None or self.min_frames != self.max_frames \
-                    or self.event_target_anchor_frame is None or self.output_latent_frames is None:
-                raise RuntimeError("per_chunk prompts need a fixed training window layout")
-            _windows = chunk_windows(
-                load_timed_prompts(caption_path),
-                available_frames=available_frames,
-                window_frames=int(self.max_frames),
-                prefix_frames=int(self.event_target_anchor_frame),
-                chunk_frames=int(self.output_latent_frames) * int(self.vae_temporal_factor),
-                fps=float(self.target_fps),
-            )
-            if not _windows:
-                raise RuntimeError(f"no per-chunk window with a prompt fits in {video_path}")
-            _chunk_start, seg_cached_caption = random.choice(_windows)
-            seg_caption_type = "chunk"
-            seg_frame_low = int(_chunk_start * _fps_ratio)
-            # Slightly-below-target rates (23.976) take the interpolation path, which reads
-            # int(n * ratio) + 1 source frames; give it exactly that span so the start stays put.
-            seg_frame_high = min(
-                video_length,
-                seg_frame_low + int(self.max_frames * _fps_ratio) + (1 if _need_interp else 0),
-            )
-
         # === Mixed timed prompts: pick a prompt, then any window whose target lies inside it ===
         if config.get('timed_prompt_mode') == 'mixed' and self.random_frames:
             from alaya.data.standard import FPS_TOLERANCE, load_timed_prompts, mixed_windows

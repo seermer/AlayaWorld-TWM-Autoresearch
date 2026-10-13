@@ -13,7 +13,6 @@ and is named under data.datasets:
         my_clips:
           root: /path/to/my_clips
           format: video_timed_prompts_camera
-          prompt_mode: per_chunk
           weight: 1.0
 
 register_datasets() turns each entry into a MultiSourceVideoDataset source, so the
@@ -26,8 +25,7 @@ import os
 from dataclasses import dataclass
 
 FORMATS = ("video_caption_camera", "video_timed_prompts_camera", "video_caption_static")
-PROMPT_MODES = ("segment", "per_chunk", "mixed")
-_SPEC_KEYS = {"root", "format", "prompt_mode", "weight"}
+_SPEC_KEYS = {"root", "format", "weight"}
 # 23.976 fps ("24 fps" video) counts as the 24 fps training rate.
 FPS_TOLERANCE = 0.01
 
@@ -38,7 +36,6 @@ class DatasetSpec:
     root: str
     format: str
     weight: float = 1.0
-    prompt_mode: str | None = None
 
 
 def parse_dataset_specs(raw: dict) -> list[DatasetSpec]:
@@ -65,16 +62,10 @@ def parse_dataset_specs(raw: dict) -> list[DatasetSpec]:
         fmt = entry.get("format")
         if fmt not in FORMATS:
             raise ValueError(f"{where}.format must be one of {list(FORMATS)}, got {fmt!r}")
-        mode = entry.get("prompt_mode")
-        if fmt == "video_timed_prompts_camera":
-            if mode not in PROMPT_MODES:
-                raise ValueError(f"{where}.prompt_mode must be one of {list(PROMPT_MODES)} for {fmt}, got {mode!r}")
-        elif mode is not None:
-            raise ValueError(f"{where}.prompt_mode only applies to video_timed_prompts_camera")
         weight = float(entry.get("weight", 1.0))
         if weight < 0:
             raise ValueError(f"{where}.weight must be >= 0")
-        specs.append(DatasetSpec(name=name, root=str(entry["root"]), format=fmt, weight=weight, prompt_mode=mode))
+        specs.append(DatasetSpec(name=name, root=str(entry["root"]), format=fmt, weight=weight))
     return specs
 
 
@@ -89,10 +80,10 @@ def source_config(spec: DatasetSpec) -> dict:
         "original_width": 1280.0,
         "original_height": 720.0,
         "fallback_default_intrinsic": True,
-        "use_segment_caption": timed and spec.prompt_mode == "segment",
+        "use_segment_caption": False,
         "segment_caption_field": "prompt",
         "overall_caption_field": "caption",
-        "timed_prompt_mode": spec.prompt_mode if timed else None,
+        "timed_prompt_mode": "mixed" if timed else None,
         # Read by the legacy scanner only; kept so code that inspects them does not KeyError.
         "jsonl": "",
         "video_subdir": "",
@@ -142,34 +133,6 @@ def load_timed_prompts(caption_path: str) -> list[tuple[float, float, str]]:
         for seg in data.get("segments") or []
     ]
     return sorted(prompts, key=lambda p: p[0])
-
-
-def chunk_windows(
-    prompts: list[tuple[float, float, str]],
-    *,
-    available_frames: int,
-    window_frames: int,
-    prefix_frames: int,
-    chunk_frames: int,
-    fps: float,
-) -> list[tuple[int, str]]:
-    """Training windows that line up with interactive rollout rounds.
-
-    Round r (1-based) of a rollout generates frames [prefix + chunk*(r-1), prefix + chunk*r)
-    of the clip, so its training window starts at chunk*(r-1): the first `prefix_frames`
-    frames are history and the rest is the target. The caption is the prompt active at
-    the target's midpoint. Returns (start_frame, prompt) at the target fps; rounds whose
-    window runs past the clip or whose target has no prompt are left out.
-    """
-    windows = []
-    start = 0
-    while start + window_frames <= available_frames:
-        mid_s = (start + prefix_frames + chunk_frames / 2.0) / fps
-        active = [p for lo, hi, p in prompts if lo <= mid_s < hi]
-        if active:
-            windows.append((start, active[0]))
-        start += chunk_frames
-    return windows
 
 
 def mixed_windows(

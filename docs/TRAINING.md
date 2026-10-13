@@ -17,7 +17,7 @@ does on 24GB cards (LoRA, no text encoder, serial loading) is in [`docs/LOWCOMPU
 
 Contents:
 1. [Data](#1-data): modalities, the three formats, checking a dataset
-2. [Config](#2-config): a recipe for your data, segment vs per-chunk prompts, key fields
+2. [Config](#2-config): a recipe for your data, how timed prompts are trained, key fields
 3. [Launch](#3-launch): starting a run, logs, where the weights are
 
 ---
@@ -33,7 +33,7 @@ repeats: round 1 generates frames 25-56, round 2 frames 57-88, and so on, each r
 conditioned on the ones before it.
 
 This is why clips must be at least 2.375 s long, why the frame rate must be at least 24 fps, and
-why the per-chunk prompt mode (section 2.4) cares where prompt changes fall.
+why a timed prompt has a minimum length (section 2.4).
 
 One **epoch** is one window from every clip, so the number of clips, not their length, sets how
 many samples an epoch has. You need **at least as many clips as GPUs**: clips are split evenly
@@ -96,12 +96,12 @@ video follows. Stored in the same `captions/<id>.json`, next to the caption:
   end within the video; gaps are allowed (no prompt is drawn there).
 - Each prompt describes what is on screen **during its range**, phrased the way a user would
   prompt at that moment.
-- `caption` is still required. Segment mode trains on it 10% of the time
-  (`data.overall_caption_prob`); per-chunk mode does not use it.
-- If you train with `prompt_mode: per_chunk` (section 2.4), boundaries between prompts must sit
-  on round boundaries, **25/24 + k x 32/24 s**: 1.042, 2.375, 3.708, 5.042, 6.375, 7.708 s, and so
-  on. The example above changes prompt at 3.708 s (round 3 starts) and 5.042 s (round 4). Plan
-  your events or edits around those times, or cut clips so they line up.
+- The first prompt starts at 0.
+- `caption` is still required: a description of the whole clip. Windows are trained with the
+  timed prompts.
+- Every prompt must be long enough to be trained on (section 2.4): the first at least 57 frames
+  at 24 fps (2.375 s), each later one at least 32 frames (1.333 s). Boundaries can fall on any
+  frame.
 
 #### Camera extrinsics (pose)
 
@@ -201,16 +201,17 @@ python scripts/tools/check_dataset.py --config configs/examples/finetune_video_t
 ```
 layout: 57 frames per window at 24 fps (25 history + 32 target)
 
-[OK] example (video_timed_prompts_camera, prompt_mode=per_chunk) at data/examples/video_timed_prompts_camera: 6 clips, 0.8 min, 30 round-aligned windows, 0 errors, 0 warnings
+[OK] example (video_timed_prompts_camera) at data/examples/video_timed_prompts_camera: 6 clips, 0.8 min, 18 prompts, 0 errors, 0 warnings
 ```
 
 It exits 1 on any error.
 
 - **Errors:** a missing caption or pose, an empty caption, a clip too short or below 24 fps,
   pose count different from the frame count, a non-rigid pose, overlapping segments or ones
-  past the end of the video, and per-chunk boundaries that are not on round boundaries.
-- **Warnings:** missing intrinsics, an off-centre principal point, segments too short for
-  segment mode, and files without a matching video.
+  past the end of the video, a first prompt that does not start at 0, and a prompt too short
+  to be trained on.
+- **Warnings:** missing intrinsics, an off-centre principal point, and files without a matching
+  video.
 
 ---
 
@@ -247,7 +248,6 @@ data:
     street_night:
       root: /data/street_night_clips
       format: video_timed_prompts_camera
-      prompt_mode: per_chunk             # timed prompts only: per_chunk or segment
       weight: 0.5                        # drawn half as often as `street`
 runtime:
   text_embed_cache_dir: cache/text_embed_my_finetune
@@ -257,7 +257,6 @@ runtime:
 |---|---|
 | `root` | the dataset directory from section 1.3 |
 | `format` | `video_caption_camera`, `video_timed_prompts_camera` or `video_caption_static` |
-| `prompt_mode` | timed prompts only: how windows and prompts are paired, section 2.4 |
 | `weight` | relative sampling weight between datasets; `0` disables one |
 
 Several datasets of different formats can be mixed in one run. Unknown keys and invalid
@@ -268,8 +267,7 @@ default (`validation.enabled: false`). If you rename `example`, rename it there 
 
 ### 2.3 Mix datasets and formats
 
-One run can train on any number of datasets, each in its own format and, for timed prompts,
-with its own `prompt_mode`, through the same weighted mixing the loader uses for built-in
+One run can train on any number of datasets, each in its own format, through the same weighted mixing the loader uses for built-in
 corpora. Mixing is also how to keep the model's existing abilities while teaching a new one:
 mix your new data with general footage instead of training on the new data alone.
 [`configs/examples/finetune_mixed.yaml`](../configs/examples/finetune_mixed.yaml) mixes all
@@ -279,7 +277,7 @@ three example datasets:
 data:
   datasets:
     cam:    {root: data/examples/video_caption_camera,       format: video_caption_camera,       weight: 1.0}
-    pencil: {root: data/examples/video_timed_prompts_camera, format: video_timed_prompts_camera, prompt_mode: per_chunk, weight: 2.0}
+    pencil: {root: data/examples/video_timed_prompts_camera, format: video_timed_prompts_camera, weight: 2.0}
     static: {root: data/examples/video_caption_static,       format: video_caption_static,       weight: 1.0}
 ```
 
@@ -289,7 +287,7 @@ data:
 - **One epoch** is sized so the dataset needing the most draws for its share is seen about once:
   `max(clips / share)` windows, here max(6/0.25, 6/0.5, 6/0.25) = 24.
 - **Each sample keeps its own format.** A static clip gets a fixed camera, a camera clip its
-  poses, a timed-prompt clip its round-aligned window and prompt. Different GPUs can draw
+  poses, a timed-prompt clip its window and prompt. Different GPUs can draw
   different formats in the same optimizer step.
 - The checker and the prompt precache handle every dataset in the config in one call.
 
@@ -299,48 +297,21 @@ Measured with that config on 4x RTX 4090:
 - **Training:** 8 steps drew from all three datasets and wrote a checkpoint, with an 18.35GB
   peak per GPU.
 
-### 2.4 Timed prompts: `per_chunk` or `segment`
+### 2.4 How timed prompts are trained
 
-Both modes read the same `video_timed_prompts_camera` data. They differ in which windows are
-drawn and which prompt each window is trained with.
+A `video_timed_prompts_camera` clip is trained one prompt at a time. Each draw picks one of the
+clip's prompts, then a window whose 32 target frames all lie inside that prompt's time range, and
+trains the window with that prompt. Only the target has to be under the prompt: the 25 history
+frames before it may still be under the earlier one.
 
-**`per_chunk`**: windows start only on round boundaries (frame 0, 32, 64, ... at 24 fps), exactly
-where an interactive rollout's rounds fall. Each window is trained with the prompt active at the
-midpoint of its 32 target frames. When the prompt changes at a round boundary, the window for that
-round has history under the old prompt and a target under the new one. That is the
-interactive-prompting situation: the prompt switches and the next round must follow it.
-
-**`segment`**: each draw picks one segment, then places the window at a random position
-**inside** it and trains with that segment's prompt (or with `caption`, 10% of the time).
-A window never spans two prompts. Segments shorter than one window (2.375 s) are never drawn.
-
-Measured on the example dataset through the training loader (300 draws each):
-
-| | `segment` | `per_chunk` |
-|---|---|---|
-| prompts trained | raw 129, sketch 139, `caption` 32, **transforming 0** | raw 131, transforming 51, sketch 118 |
-| windows whose history is under a different prompt than the trained one | **0%** | **38.3%** |
-| distinct windows per 8 s, 30 fps clip | 60 (41 start frames inside raw, 19 inside sketch) | 5 (one per round) |
-
-The "transforming" segment lasts 1.33 s, shorter than a window, so segment mode never sees it.
-Per-chunk mode trains the transition in rounds 3 and 4, where the prompt changes.
-
-Use **`per_chunk`** when the point is to react to a prompt change during rollout: style
-switches, triggered events, any "now do X" instruction.
-- **Pro:** it teaches the switch itself, at the timing inference uses, including changes
-  shorter than a window.
-- **Con:** only round-aligned windows, so fewer distinct samples per clip (overfits sooner on
-  little data).
-- **Con:** prompt boundaries must be on round boundaries (the checker enforces this).
-
-Use **`segment`** when prompts describe long, mostly steady stretches and you want the model to
-follow whichever prompt it is given, for example a long walk annotated scene by scene.
-- **Pro:** more varied windows from the same data.
-- **Pro:** arbitrary boundaries.
-- **Pro:** the whole-clip caption is mixed in.
-- **Con:** it never trains a window where the prompt changes, so it will not teach a
-  mid-rollout switch.
-- **Con:** segments under 2.375 s are wasted.
+- Half of the draws of a prompt that has an earlier prompt before it put the target on the
+  prompt's first frame. That window has history under the old prompt and a target under the new
+  one, which is the interactive-prompting situation: the prompt switches and the next round must
+  follow it.
+- The other draws place the target anywhere inside the prompt's range.
+- A prompt must leave room for one target: at least 32 frames at 24 fps (1.333 s), and for a
+  prompt that starts in the clip's first 25 frames, 32 frames after frame 25 (so the first
+  prompt lasts at least 57 frames, 2.375 s). The checker reports every prompt that is shorter.
 
 ### 2.5 Key fields
 
@@ -351,7 +322,6 @@ ones you are most likely to change:
 |---|---|---|
 | `run.name`, `run.output_dir`, `run.log_dir` | per recipe | give every run its own; checkpoints and logs go here |
 | `data.datasets` | one dataset | section 2.2 |
-| `data.overall_caption_prob` | `null` (0.1) | segment mode only: how often `caption` replaces the segment prompt |
 | `optimizer.lr` | `5.0e-05` | LoRA learning rate. The 29-clip C3VD overfit test used `2.0e-04` for 300 steps |
 | `optimizer.max_steps` | `300` | optimizer steps. Windows seen = steps x GPUs x `batch_size` x `grad_accum_steps`. Training stops at `max_steps` or after `optimizer.epochs` (5000) epochs, whichever comes first |
 | `optimizer.grad_accum_steps` | `4` | effective batch = GPUs x `batch_size` x this; `batch_size` must stay 1 on 24GB |

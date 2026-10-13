@@ -20,7 +20,7 @@ paths:
 data:
   # Built-in sources registered in code; none here.
   sources: {}
-  # Standard-format datasets: name -> root, format, [prompt_mode], weight.
+  # Standard-format datasets: name -> root, format, weight.
   # Each draw picks a dataset with probability weight / sum(weights), then a clip from it;
   # small datasets are repeated to reach their share. Here: 25% cam, 50% pencil, 25% static.
   datasets:
@@ -31,7 +31,6 @@ data:
     pencil:
       root: data/examples/video_timed_prompts_camera
       format: video_timed_prompts_camera
-      prompt_mode: per_chunk
       weight: 2.0
     static:
       root: data/examples/video_caption_static

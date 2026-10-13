@@ -19,7 +19,7 @@ paths:
 data:
   # Built-in sources registered in code; none here.
   sources: {}
-  # Standard-format datasets: name -> root, format, [prompt_mode], weight.
+  # Standard-format datasets: name -> root, format, weight.
   datasets:
     example:
       root: data/examples/video_caption_static
