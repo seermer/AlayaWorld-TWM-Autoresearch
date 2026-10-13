@@ -10,14 +10,16 @@ CASE = {
         {"type": "navigation", "action": "W", "turn": 2},
         {"type": "perspective_switch", "action": "fp_to_tp", "turn": 3},
         {"type": "event_edit", "action": "The rain stops.", "turn": 4},
+        {"type": "perspective_switch", "action": "tp_to_fp", "prompt": "The view returns to the viewer's eyes.", "turn": 5},
     ],
 }
-SCENE = "First-person viewer. A cafe table on a sidewalk."
+SCENE = "A cafe table on a sidewalk. First-person viewer."
 
 
 def test_each_turn_has_the_scene_and_only_its_own_interaction():
-    turn1, turn2, turn3, turn4 = (_strip_camera(p) for p in _build_interaction_prompt_schedule(CASE))
+    turn1, turn2, turn3, turn4, turn5 = (_strip_camera(p) for p in _build_interaction_prompt_schedule(CASE))
     assert turn1 == f"{SCENE} Rain begins to fall."
     assert turn2 == SCENE
     assert turn3.startswith(f"{SCENE} The view switches from first-person to third-person")
     assert turn4 == f"{SCENE} The rain stops."
+    assert turn5 == f"{SCENE} The view returns to the viewer's eyes."

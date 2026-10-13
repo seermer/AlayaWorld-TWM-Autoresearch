@@ -9,17 +9,14 @@ LTX_DEFAULT_NEGATIVE_PROMPT = (
     "excessive noise, grainy texture, poor lighting, flickering, motion blur, "
     "distorted proportions, unnatural skin tones, deformed facial features, "
     "asymmetrical face, missing facial features, extra limbs, disfigured hands, "
-    "wrong hand count, artifacts around text, inconsistent perspective, camera shake, "
+    "wrong hand count, artifacts around text, camera shake, "
     "incorrect depth of field, background too sharp, background clutter, "
-    "distracting reflections, harsh shadows, inconsistent lighting direction, "
-    "color banding, cartoonish rendering, 3D CGI look, unrealistic materials, "
+    "distracting reflections, harsh shadows, color banding, "
     "uncanny valley effect, incorrect ethnicity, wrong gender, exaggerated expressions, "
     "wrong gaze direction, mismatched lip sync, silent or muted audio, distorted voice, "
     "robotic voice, echo, background noise, off-sync audio, incorrect dialogue, "
     "added dialogue, repetitive speech, jittery movement, awkward pauses, "
-    "incorrect timing, unnatural transitions, inconsistent framing, tilted camera, "
-    "flat lighting, inconsistent tone, cinematic oversaturation, stylized filters, "
-    "or AI artifacts."
+    "incorrect timing, tilted camera, flat lighting, or AI artifacts."
 )
 
 
@@ -545,12 +542,6 @@ class ValidationConfig:
     stg_blocks: list[int] = field(default_factory=lambda: [28])
     rescale_scale: float = 0.7
     step_dir_suffix: str = ""
-    # Derive the rollout noise from a per-sample generator keyed on the sample's own
-    # id instead of drawing from the rank's global CUDA stream. Without it the noise a
-    # sample receives depends on which rank it landed on and how many samples ran
-    # before it, so the same case gives different video under a different GPU count,
-    # case ordering, subset or --resume. Set false for the historical behaviour.
-    per_sample_seed: bool = True
     save_videos: bool = True
     # The extra per-sample diagnostic dump (prediction vs GT vs condition vs mask
     # strips) written next to the mode dir. Costs a lot of memory and disk on long

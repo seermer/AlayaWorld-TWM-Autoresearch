@@ -432,8 +432,7 @@ To try an interactive prompt change, give the validation mode a `prompt_schedule
 per round, for example `["caption", "caption", "<transition prompt>", "<new style prompt>"]`,
 where `caption` means the clip's own caption. Then run `precache_train_text_embeds.py` on that
 config: it caches the literal schedule prompts along with the training prompts. If the new style
-matches words in the default `validation.negative_prompt` (it lists "grainy texture" and
-"stylized filters", for example), set `negative_prompt: ''`, or classifier-free guidance will
+matches words in the default `validation.negative_prompt` (it lists "grainy texture", for example), set `negative_prompt: ''`, or classifier-free guidance will
 steer away from the style.
 
 ---

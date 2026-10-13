@@ -98,12 +98,12 @@ WBench's `--gpus` defaults to every visible GPU, so pass it explicitly.
 | Change | Why |
 |---|---|
 | `alaya/data/wbench.py`: `include_non_navigation` | `WBenchNaviDataset` kept only the 158 cases with a W/A/S/D/arrow turn. The flag keeps all 289. |
-| `alaya/data/wbench.py`: `_build_interaction_prompt_schedule` | Each turn's prompt is the scene description plus that turn's own interaction, as in WBench's protocol (paper B.1.1; `src/models/base.py` `_build_turn_prompt`). The original adapter kept every earlier event and action sentence in all later turns. |
-| `alaya/data/wbench.py`: `_perspective_switch_clause` | `perspective_switch` actions are codes (`fp_to_tp`, `tp_to_tp: switch to follow ...`) and were appended to the `<camera>` block — which `_strip_camera()` deletes wholesale, so those 61 turns reached the model as no-ops. They are now rendered into the scene narrative using WBench's own `PERSPECTIVE_TYPE_DESC` strings verbatim (the same text its judge is shown), so no wording is invented. The sentence appears on the switching turn only. |
+| `alaya/data/wbench.py`: `_build_interaction_prompt_schedule` | Each turn's prompt is the scene description, then the subject description, then that turn's own interaction, as in WBench's protocol (paper B.1.1; `src/models/base.py` `_build_turn_prompt`). The original adapter kept every earlier event and action sentence in all later turns. |
+| `alaya/data/wbench.py`: `perspective_switch` turns | `perspective_switch` actions are codes (`fp_to_tp`, `tp_to_tp: switch to follow ...`) and were appended to the `<camera>` block — which `_strip_camera()` deletes wholesale, so those 61 turns reached the model as no-ops. The turn's prompt carries the interaction's own `prompt` sentence. The 3 interactions without one get a sentence built by `_perspective_switch_clause` from WBench's `PERSPECTIVE_TYPE_DESC` strings (the text its judge is shown). The sentence appears on the switching turn only. |
 | `alaya/data/wbench.py`: `_short_subject` article strip | `desc.lstrip("aA ")` strips a *character set*, not an article: "an elf ..." became "n elf ...". Affects 13 of the 289 cases. Only the `WBENCH_ACTION_CLAUSES` path consumes it. |
 | `alaya/model/loader.py`: `ALAYA_INIT_TRANSFORMER_ON_CPU` | 13B bf16 = 26GB does not fit unsharded on a 24GB card. Building on CPU lets FSDP move and shard the model one attention block at a time. |
 | `alaya/model/loader.py`: streaming state-dict reads | The LTX-2.3 release file is 43GB but only ~26GB of it is the video DiT. Reading tensor by tensor avoids materialising the audio branch, vocoder and VAE per rank. |
-| `alaya/trainer/rollout_trainer.py`: `validation.per_sample_seed` | The rollout noise was drawn from the rank's global CUDA stream, so a case's video depended on which rank it landed on and how many samples ran before it. Keyed on the case id instead, a case reproduces from `run.seed` alone. |
+| `alaya/trainer/rollout_trainer.py`: `_validation_noise_generator` | The rollout noise was drawn from the rank's global CUDA stream, so a case's video depended on which rank it landed on and how many samples ran before it. Each case has its own generator, seeded with the `seed` in its case file, or 42 when it has none. |
 | `alaya/model/loader.py`: `ALAYA_SKIP_TEXT_ENCODER`, `ALAYA_GEMMA_DEVICE_MAP`, `ALAYA_GEMMA_MAX_MEMORY` | Serve prompts from the on-disk cache instead of holding a 24GB text encoder; and let the precache pass spread Gemma over two cards. |
 | `alaya/model/loader.py`: `_release_host_arenas()` | `LTX23Model` is built in fp32 (52GB) and cast to bf16; glibc keeps the freed arenas, so five ranks pinned all 251GB of host RAM. |
 | `alaya/trainer/rollout_trainer.py`: `_decode_latent_overlap_tiled` | A whole-video VAE decode at 544x960 exceeds a 24GB card. Ported the da3 engine's overlap-tiling decode, which matches a whole decode to within ~0.1/255 mean (max 13/255, measured at overlap 6) rather than leaving a seam per chunk. |
@@ -112,8 +112,7 @@ WBench's `--gpus` defaults to every visible GPU, so pass it explicitly.
 | `configs/wbench_full.yaml`: `vigeo_cache_budget` 262144 -> 65536 | The shipped value is sized for 80GB cards; ViGeo's KV cache alone then needs ~12GB on top of the sharded DiT. |
 | `configs/wbench_full.yaml`: `dmd.enabled: false` | Validation never touches the DMD critic, but `dmd.enabled` builds a second frozen 13B score model. The 4-step student still loads via `paths.dmd_resume`. |
 
-Two of these change the shipped defaults: `validation.per_sample_seed` is now true
-(reproducibility should not be opt-in), and `scripts/finetune/train.sh` defaults to
+One of these changes a shipped default: `scripts/finetune/train.sh` defaults to
 FA2 with FA3 opt-in via `ALAYA_USE_FA3=1` (FA3 is Hopper-only, must be built locally,
 and aborts the process at the C++ level when it meets the xformers ViGeo/DA3 pull in).
 The rest are additive and inert unless enabled.
@@ -155,12 +154,10 @@ projecting through whatever `patchify_proj` happened to hold (random init, seede
 `run.seed + rank`, i.e. a different model on every rank). Stage2b training used the
 same ordering, so the LTX-base snapshot is what the released history encoder expects.
 
-**Rollout noise.** `validation.per_sample_seed` now defaults to true. Set it false and
-the noise is drawn from the rank's global CUDA stream instead, so a case's video
-depends on which rank it landed on and how many samples preceded it -- a different GPU
-count, case order, subset or `--resume` all change the result. Seeded, a case is a
-function of `run.seed` and its case id alone (verified: the same case rendered on rank
-1 of a 4-case run and rank 0 of a 1-case run is pixel-identical).
+**Rollout noise.** A case's noise comes from its own generator, seeded with the `seed` in
+its case file, or 42 when it has none (WBench's cases have none, so each renders with 42). A
+prompt variant adds its index to the seed. The video does not depend on the rank, the GPU
+count, the case order, the subset or `--resume`. `run.seed` seeds everything else.
 
 ## 6. Notes on this hardware (5 x RTX 4090, 24GB)
 

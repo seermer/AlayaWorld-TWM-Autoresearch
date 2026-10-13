@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import math
 import os
@@ -2607,41 +2606,14 @@ class RolloutTrainer:
             spatial_condition_prefix_latents,
         )
 
-    def _validation_noise_generator(
-        self, metadata: dict[str, Any], variant_index: int = 0
-    ) -> torch.Generator | None:
-        """A per-sample CUDA generator, or None to keep using the rank's global stream.
+    def _validation_noise_generator(self, metadata: dict[str, Any], variant_index: int = 0) -> torch.Generator:
+        """The rollout's noise generator: the case's own seed (42 without one) plus the prompt variant.
 
-        The rollout draws its noise sequentially from the rank's stream, which is
-        seeded once as run.seed + rank. That makes a sample's noise depend on its rank
-        and on how many samples preceded it, so the same case renders differently under
-        a different GPU count, case order, subset or --resume. Keying the generator on
-        the sample's own id instead makes a case reproducible from run.seed alone.
+        A case renders the same on any rank, GPU count, case order or --resume.
         """
-        if not bool(getattr(self.cfg.validation, "per_sample_seed", False)):
-            return None
-        key = str(
-            metadata.get("wbench_case_id")
-            or metadata.get("video_id")
-            or metadata.get("wbench_first_frame_src")
-            or ""
-        ).strip()
-        if not key:
-            # No stable per-sample id to key on. Seeding them all alike would be worse
-            # than the status quo (every sample would draw the same noise), so fall
-            # back to the rank's global stream.
-            rank0_print(
-                self.dist,
-                "[Validation]",
-                "per_sample_seed is on but this sample carries no id; using the global stream",
-            )
-            return None
-        digest = hashlib.sha1(
-            f"{int(self.cfg.run.seed)}|{key}|{int(variant_index)}".encode("utf-8")
-        ).digest()
-        seed = int.from_bytes(digest[:8], "big") & ((1 << 63) - 1)
+        seed = metadata.get("wbench_seed")
         generator = torch.Generator(device=self.dist.device)
-        generator.manual_seed(seed)
+        generator.manual_seed((42 if seed is None else int(seed)) + int(variant_index))
         return generator
 
     def _validation_sigmas(self, *, latent_frames: int | None = None) -> torch.Tensor:

@@ -373,6 +373,7 @@ class WBenchNaviDataset(Dataset):
                 "wbench_prompt_schedule": prompt_schedule,
                 "wbench_turn_actions": _full_turn_actions(case),  # camera action of every turn
                 "wbench_subject_mask": subject_mask_path,
+                "wbench_seed": case.get("seed"),
             },
         )
 
@@ -629,7 +630,7 @@ def _build_training_style_caption(
     else:
         char = str(case.get("character_prompt", "")).strip()
         env = str(case.get("environment_prompt", "")).strip()
-        scene_base = " ".join(p for p in [char, env] if p)
+        scene_base = " ".join(p for p in [env, char] if p)
         cam_base = str(case.get("perspective_prompt", "")).strip()
     scene = " ".join(p for p in [scene_base, scene_extra.strip()] if p)
     cam = " ".join(p for p in [cam_base, camera_extra.strip()] if p)
@@ -644,7 +645,8 @@ def _build_interaction_prompt_schedule(
 ) -> list[str]:
     """Return the training-style prompt per turn: the scene plus that turn's own interactions.
        - event_edit / subject_action.action -> appended to the scene narrative
-       - perspective_switch.action -> appended to the scene narrative as prose, and to the <camera> block
+       - perspective_switch -> its own prompt sentence (or, without one, prose made from its action)
+         appended to the scene narrative, and its action to the <camera> block
        Earlier turns' interactions are not carried over (WBench's protocol: the world
        description plus the current interaction).
        Turns are 1-based; index 0..(max_turn-1) corresponds to turn 1..max_turn.
@@ -669,7 +671,7 @@ def _build_interaction_prompt_schedule(
                 scene_extra.append(act)
             elif typ == "perspective_switch":
                 camera_extra.append(act)
-                perspective_extra.append(_perspective_switch_clause(act))
+                perspective_extra.append(str(it.get("prompt") or "").strip() or _perspective_switch_clause(act))
         sched.append(
             _build_training_style_caption(
                 case, rewritten=rewritten,

@@ -280,9 +280,6 @@ validation:
   rescale_scale: 0.0
   sampling_steps: 4
   save_joystick: true
-  # Seed the rollout noise per case, so a case renders the same regardless of which
-  # rank it lands on, the GPU count, the bucketing or --resume.
-  per_sample_seed: true
   save_videos: true
   # Only the benchmark mp4 + sidecar; the diagnostic strips cost ~35MB per case
   # (10GB over the full split) and OOM a 24GB card on the longest rollouts.
