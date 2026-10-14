@@ -466,7 +466,7 @@ An end-to-end test that training teaches the model to follow a text change durin
   on, as WBench cases with the camera held and three turns: no transform sentence; raw, then
   canny, then depth; and canny, then depth, starting from the canny version of the first frame.
 
-Result, judged by eye on the 3 hold-out scenes (rendered with an empty negative prompt):
+Result, judged by eye on the 3 hold-out scenes:
 - Without a transform sentence the video stays raw footage.
 - Raw to canny follows the text within the first second of the turn.
 - Canny to depth works in some cases and not well.
