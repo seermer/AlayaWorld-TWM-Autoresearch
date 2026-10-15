@@ -15,63 +15,11 @@ from torchvision import transforms
 _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 
-_FP_CLAUSE = {
-    "W": "The camera moves steadily forward through the scene.",
-    "S": "The camera retreats backward.",
-    "A": "The camera slides to the left, strafing sideways.",
-    "D": "The camera slides to the right, strafing sideways.",
-    "left": "The camera turns to the left, panning the view leftward.",
-    "right": "The camera turns to the right, panning the view rightward.",
-    "up": "The camera tilts upward.",
-    "down": "The camera tilts downward.",
-}
-_TP_CLAUSE = {
-    "W": "The {s} walks forward and the camera follows behind at the same speed, keeping it centred in frame.",
-    "S": "The {s} backs toward the camera as the camera retreats, staying centred in frame.",
-    "A": "The {s} and the camera slide together to the left, the {s} staying centred in frame.",
-    "D": "The {s} and the camera slide together to the right, the {s} staying centred in frame.",
-    "left": "The camera arcs around the {s} to the left, keeping it centred in frame.",
-    "right": "The camera arcs around the {s} to the right, keeping it centred in frame.",
-    "up": "The camera tilts upward while the {s} stays in frame.",
-    "down": "The camera tilts downward while the {s} stays in frame.",
-}
-_TRANS_KEYS = ("W", "S", "A", "D")
-
-
-def _short_subject(case: dict) -> str:
-    desc = str(((case.get("settings", {}) or {}).get("subject", {}) or {}).get("desc", "")).strip()
-    for pre in ("The main subject is ", "the main subject is "):
-        if desc.startswith(pre):
-            desc = desc[len(pre):]
-    # NB: not desc.lstrip("aA "), which strips a *character set* -- it turns
-    # "an elf ..." into "n elf ..." and "apple picker" into "pple picker".
-    lowered = desc.lower()
-    for article in ("the ", "an ", "a "):
-        if lowered.startswith(article):
-            desc = desc[len(article):]
-            break
-    words = desc.split()
-    return " ".join(words[:5]).rstrip(",.;") or "subject"
-
-
-def _action_clause(action: str, *, third_person: bool, subject: str) -> str:
-    table = _TP_CLAUSE if third_person else _FP_CLAUSE
-    parts = [p.strip() for p in str(action).replace(",", "+").split("+") if p.strip()]
-    norm = []
-    for p in parts:
-        if p in {"w", "a", "s", "d"}:
-            p = p.upper()
-        if p in table:
-            norm.append(p)
-    norm.sort(key=lambda p: 0 if p in _TRANS_KEYS else 1)
-    clauses = [table[p].format(s=subject) for p in norm]
-    if not clauses:
-        return ""
-    if len(clauses) == 1:
-        return clauses[0]
-    first = clauses[0].rstrip(".")
-    rest = [c[0].lower() + c[1:].rstrip(".") for c in clauses[1:]]
-    return first + " while " + " while ".join(rest) + "."
+# LingBot's third-person suffix (WBench/examples/lingbot), verbatim; the training text ends third-person turns with it.
+_THIRD_PERSON_VIEW = (
+    "The subject remains centered in the frame, moving and acting naturally in response to the camera's movement "
+    "while staying in focus."
+)
 
 
 def _strip_camera(text: str) -> str:
@@ -302,16 +250,6 @@ class WBenchNaviDataset(Dataset):
             if candidate.exists():
                 subject_mask_path = str(candidate)
         import os as _os
-        if _os.environ.get("WBENCH_ACTION_CLAUSES", "0") == "1":
-            persp0 = str((case.get("settings", {}) or {}).get("perspective", case.get("perspective", "third_person")))
-            subj = _short_subject(case)
-            nav_turns = {int(it.get("turn", 0) or 0) for it in (case.get("interactions") or []) if str(it.get("type")) == "navigation"}
-            full_acts = _full_turn_actions(case)
-            for ti in range(len(prompt_schedule)):
-                if (ti + 1) in nav_turns and ti < len(full_acts):
-                    cl = _action_clause(full_acts[ti], third_person=persp0 != "first_person", subject=subj)
-                    if cl:
-                        prompt_schedule[ti] = (prompt_schedule[ti] + " " + cl).strip()
         if _os.environ.get("WBENCH_OFFSCREEN_EVENTS", "0") == "1":
             _off = str(((case.get("scene_adherence") or {}).get("offscreen_part") or "")).strip()
             _pj = _os.environ.get("WBENCH_OFFSCREEN_PRESENCE_JSONL", "")
@@ -365,7 +303,7 @@ class WBenchNaviDataset(Dataset):
             if _cl2:
                 for _ti in range(len(prompt_schedule)):
                     prompt_schedule[_ti] = (prompt_schedule[_ti] + " " + _cl2).strip()
-        perspective = str(settings.get("perspective", case.get("perspective", "third_person")))
+        perspective = str(settings["perspective"])
         return self._assemble(
             image=image, actions=actions, caption=caption, perspective=perspective,
             disp_id=f"case_{case_id}", case_id=str(case_id), case_path=str(case_path),
@@ -615,6 +553,21 @@ def _perspective_switch_clause(action: str) -> str:
     return switch
 
 
+def _turn_perspectives(case: dict[str, Any], max_turn: int) -> list[str]:
+    """Perspective of each turn 1..max_turn: settings.perspective, then the target of each perspective_switch."""
+    view = str(case["settings"]["perspective"])
+    switches = {
+        int(it["turn"]): str(it["action"]) for it in case.get("interactions", []) or []
+        if str(it.get("type")) == "perspective_switch"
+    }
+    views = []
+    for t in range(1, max_turn + 1):
+        if t in switches:
+            view = "third_person" if _parse_ps_action(switches[t])[1] == "tp" else "first_person"
+        views.append(view)
+    return views
+
+
 def _build_training_style_caption(
     case: dict[str, Any], *, rewritten: dict[str, str] | None = None,
     scene_extra: str = "", camera_extra: str = "",
@@ -647,6 +600,7 @@ def _build_interaction_prompt_schedule(
        - event_edit / subject_action.action -> appended to the scene narrative
        - perspective_switch -> its own prompt sentence (or, without one, prose made from its action)
          appended to the scene narrative, and its action to the <camera> block
+       - a turn in third person (after any switch) ends with _THIRD_PERSON_VIEW
        Earlier turns' interactions are not carried over (WBench's protocol: the world
        description plus the current interaction).
        Turns are 1-based; index 0..(max_turn-1) corresponds to turn 1..max_turn.
@@ -655,6 +609,7 @@ def _build_interaction_prompt_schedule(
     turns = [int(it.get("turn", 0) or 0) for it in its]
     max_turn = max(turns) if turns else 1
     inter_rw = (rewritten or {}).get("interactions") or {}
+    views = _turn_perspectives(case, int(max_turn))
     sched: list[str] = []
     for t in range(1, int(max_turn) + 1):
         scene_extra: list[str] = []
@@ -672,6 +627,8 @@ def _build_interaction_prompt_schedule(
             elif typ == "perspective_switch":
                 camera_extra.append(act)
                 perspective_extra.append(str(it.get("prompt") or "").strip() or _perspective_switch_clause(act))
+        if views[t - 1] == "third_person":
+            perspective_extra.append(_THIRD_PERSON_VIEW)
         sched.append(
             _build_training_style_caption(
                 case, rewritten=rewritten,
