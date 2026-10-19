@@ -6,6 +6,7 @@ import faulthandler
 from torch.distributed.elastic.multiprocessing.errors import record
 
 from alaya.config.loader import load_config
+from alaya.utils.findings import print_findings
 
 # NOTE: trainer imports are deliberately deferred into main(): their import chain
 # (cv2/decord) loads a bundled zlib that corrupts torchvision's libpng decoder,
@@ -61,7 +62,11 @@ def main() -> None:
         trainer_cls = RolloutTrainer
     trainer = trainer_cls(cfg)
     if args.describe:
-        trainer.describe()
+        try:
+            trainer.describe()
+        except ValueError as exc:     # the config asks for a layout the trainer cannot build
+            print_findings([str(exc)])
+            raise SystemExit(1) from exc
         return
     if args.validate_only:
         import os as _os

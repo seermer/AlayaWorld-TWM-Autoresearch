@@ -157,6 +157,11 @@ def test_cli_exit_code(tmp_path):
     )
     assert result.returncode == 1, result.stdout + result.stderr
     assert "shorter than" in result.stdout
+    import json
+    from alaya.utils.findings import FINDINGS
+    [line] = [x for x in result.stdout.splitlines() if x.startswith(FINDINGS)]
+    findings = json.loads(line[len(FINDINGS):])
+    assert findings and all(f.startswith("short: ") for f in findings) and "shorter than" in findings[0]
 
 
 def test_ntsc_24fps_is_accepted(tmp_path):

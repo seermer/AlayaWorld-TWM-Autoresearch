@@ -7,7 +7,6 @@ import random
 import time
 import gc
 import ctypes
-import traceback
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -447,28 +446,22 @@ class RolloutTrainer:
                     torch.cuda.reset_peak_memory_stats()
 
                 if self.global_step % self.cfg.optimizer.checkpoint_steps == 0:
-                    try:
-                        self._cleanup_cuda_cache()
-                        save_checkpoint(
-                            cfg=self.cfg,
-                            dist_state=self.dist,
-                            step=self.global_step,
-                            transformer=self.components.transformer,
-                            history_encoder=self.history_encoder,
-                            lora_manager=self.components.lora_manager,
-                            critic_lora=self.components.critic_lora,
-                            gan_discriminator=self.components.gan_discriminator,
-                            next_forcing_head=self.components.next_forcing_head,
-                        )
-                        if dist.is_initialized():
-                            dist.barrier()
-                    except Exception as exc:
-                        print(
-                            f"[Rank {self.dist.rank}] [ERROR] Checkpoint save failed at "
-                            f"step {self.global_step}: {exc}",
-                            flush=True,
-                        )
-                        traceback.print_exc()
+                    # A failed save raises: torchrun then stops every rank, instead of a run that
+                    # trains on and ends without the checkpoint.
+                    self._cleanup_cuda_cache()
+                    save_checkpoint(
+                        cfg=self.cfg,
+                        dist_state=self.dist,
+                        step=self.global_step,
+                        transformer=self.components.transformer,
+                        history_encoder=self.history_encoder,
+                        lora_manager=self.components.lora_manager,
+                        critic_lora=self.components.critic_lora,
+                        gan_discriminator=self.components.gan_discriminator,
+                        next_forcing_head=self.components.next_forcing_head,
+                    )
+                    if dist.is_initialized():
+                        dist.barrier()
 
                 if self._should_validate(self.global_step):
                     self.validate(self.global_step)

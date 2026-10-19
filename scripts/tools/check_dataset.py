@@ -3,8 +3,10 @@
     python scripts/tools/check_dataset.py --config configs/examples/finetune_video_caption_camera.yaml
 
 Prints one summary per dataset, then every error and warning by file. Exits 1 when
-any dataset has an error. The window layout (fps, window length, rollout rounds)
-comes from the same config, so run it with the recipe you are going to train.
+any dataset has an error, after one line `===AR_FINDINGS===` + a JSON list of the errors
+(AutoResearcher tells such findings from a crash, which prints no such line). The window
+layout (fps, window length, rollout rounds) comes from the same config, so run it with the
+recipe you are going to train.
 """
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from alaya.utils.findings import print_findings  # noqa: E402
 
 
 def main() -> int:
@@ -29,6 +32,7 @@ def main() -> int:
     specs = parse_dataset_specs(cfg.data.datasets)
     if not specs:
         print(f"{args.config}: no data.datasets entries to check")
+        print_findings(["no data.datasets entries to check"])
         return 1
     layout = layout_from_config(cfg)
     print(
@@ -36,7 +40,7 @@ def main() -> int:
         f"({layout['prefix_frames']} history + {layout['chunk_frames']} target)"
     )
 
-    failed = False
+    findings = []
     for spec in specs:
         report = check_dataset(spec, **layout)
         status = "FAIL" if report.errors else "OK"
@@ -52,8 +56,10 @@ def main() -> int:
                 print(f"  {kind}: {message}")
             if len(shown) < len(messages):
                 print(f"  ... {len(messages) - len(shown)} more {kind}s (--max-messages 0 shows all)")
-        failed = failed or bool(report.errors)
-    return 1 if failed else 0
+        findings += [f"{spec.name}: {message}" for message in report.errors]
+    if findings:
+        print_findings(findings)
+    return 1 if findings else 0
 
 
 if __name__ == "__main__":

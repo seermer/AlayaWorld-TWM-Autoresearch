@@ -12,7 +12,9 @@ rather than of this script -- so the finiteness is asserted here instead of assu
       python scripts/tools/precache_train_text_embeds.py \
           --config configs/stage2b_arsft_lowcompute.yaml --device-map auto
 
-Re-runs are incremental: prompts already on disk are skipped.
+Re-runs are incremental: prompts already on disk are skipped. A config this pass refuses
+exits 1 after one line `===AR_FINDINGS===` + a JSON list of the reasons (AutoResearcher tells
+them from a crash, which prints no such line).
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ from pathlib import Path
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from alaya.utils.findings import print_findings  # noqa: E402
 
 
 def _assert_finite_prompt_set(cfg) -> None:
@@ -156,4 +159,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit as exc:
+        if not isinstance(exc.code, str):
+            raise
+        print(exc.code, file=sys.stderr)
+        print_findings([exc.code])
+        sys.exit(1)
