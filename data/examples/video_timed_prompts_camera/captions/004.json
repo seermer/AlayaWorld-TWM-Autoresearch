@@ -1,0 +1,19 @@
+{
+ "caption": "This is an outdoor public fitness park laid out on a smooth green rubberized turf surface. Rows of silver and white metal exercise machines\u2014air bikes, leg presses, and seated trainers mounted on brown vertical posts\u2014are arranged across the field, each sheltered by a curved, translucent blue canopy, several of which carry a small solar panel on top. In the background stand leafy trees, trimmed hedges, a low bench, a fenced court with a red-and-blue surface, and a cluster of tall grey apartment buildings. The whole scene is lit by bright, diffuse daylight under a pale, overcast sky.",
+ "segments": [
+  {
+   "time_range_s": [
+    0.0,
+    4.916666666666667
+   ],
+   "prompt": "This is an outdoor public fitness park laid out on a smooth green rubberized turf surface. Rows of silver and white metal exercise machines\u2014air bikes, leg presses, and seated trainers mounted on brown vertical posts\u2014are arranged across the field, each sheltered by a curved, translucent blue canopy, several of which carry a small solar panel on top. In the background stand leafy trees, trimmed hedges, a low bench, a fenced court with a red-and-blue surface, and a cluster of tall grey apartment buildings. The whole scene is lit by bright, diffuse daylight under a pale, overcast sky."
+  },
+  {
+   "time_range_s": [
+    4.916666666666667,
+    8.125
+   ],
+   "prompt": "This is an outdoor public fitness park laid out on a smooth green rubberized turf surface. Rows of silver and white metal exercise machines\u2014air bikes, leg presses, and seated trainers mounted on brown vertical posts\u2014are arranged across the field, each sheltered by a curved, translucent blue canopy, several of which carry a small solar panel on top. In the background stand leafy trees, trimmed hedges, a low bench, a fenced court with a red-and-blue surface, and a cluster of tall grey apartment buildings. The whole scene is lit by bright, diffuse daylight under a pale, overcast sky. Canny edge map."
+  }
+ ]
+}

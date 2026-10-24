@@ -24,7 +24,7 @@ CLAUDE.md
 .coverage
 .coverage.*
 coverage.xml
-/data/
+/data/*
 demo/
 desktop.ini
 develop-eggs/
@@ -157,3 +157,9 @@ wheels/
 
 # weights symlink (points at local storage)
 checkpoints
+
+# ===== Example datasets (docs/TRAINING.md 1.3); _downloads/ holds their sources =====
+!/data/examples/
+!/data/examples/**/*.mp4
+!/data/examples/**/*.npz
+/data/examples/_downloads/

@@ -1,0 +1,19 @@
+{
+ "caption": "This is the interior of a bookstore or educational supply shop, dominated by tall dark-brown metal shelving units packed floor to ceiling with workbooks and textbooks. The shelves are densely lined with rows of brightly colored books\u2014teal, orange, pink, yellow, blue, and red spines\u2014organized into stacks and angled displays, with titles such as \"Language Arts,\" \"Phonics,\" \"Spelling,\" \"Math,\" and \"Reading\" visible, alongside boxed sets labeled \"Complete Curriculum.\" Small dark hanging signs with white lettering, including one reading \"Workbooks,\" mark the sections above the shelves, and a gray carpeted floor runs along the base. The space is lit by bright, even overhead fluorescent lighting that reflects softly off the glossy book covers and the smooth metal shelf edges.",
+ "segments": [
+  {
+   "time_range_s": [
+    0.0,
+    4.5
+   ],
+   "prompt": "This is the interior of a bookstore or educational supply shop, dominated by tall dark-brown metal shelving units packed floor to ceiling with workbooks and textbooks. The shelves are densely lined with rows of brightly colored books\u2014teal, orange, pink, yellow, blue, and red spines\u2014organized into stacks and angled displays, with titles such as \"Language Arts,\" \"Phonics,\" \"Spelling,\" \"Math,\" and \"Reading\" visible, alongside boxed sets labeled \"Complete Curriculum.\" Small dark hanging signs with white lettering, including one reading \"Workbooks,\" mark the sections above the shelves, and a gray carpeted floor runs along the base. The space is lit by bright, even overhead fluorescent lighting that reflects softly off the glossy book covers and the smooth metal shelf edges. Canny edge map."
+  },
+  {
+   "time_range_s": [
+    4.5,
+    7.416666666666667
+   ],
+   "prompt": "This is the interior of a bookstore or educational supply shop, dominated by tall dark-brown metal shelving units packed floor to ceiling with workbooks and textbooks. The shelves are densely lined with rows of brightly colored books\u2014teal, orange, pink, yellow, blue, and red spines\u2014organized into stacks and angled displays, with titles such as \"Language Arts,\" \"Phonics,\" \"Spelling,\" \"Math,\" and \"Reading\" visible, alongside boxed sets labeled \"Complete Curriculum.\" Small dark hanging signs with white lettering, including one reading \"Workbooks,\" mark the sections above the shelves, and a gray carpeted floor runs along the base. The space is lit by bright, even overhead fluorescent lighting that reflects softly off the glossy book covers and the smooth metal shelf edges. Depth map."
+  }
+ ]
+}

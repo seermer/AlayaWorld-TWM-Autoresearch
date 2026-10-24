@@ -1,0 +1,19 @@
+{
+ "caption": "A bright, open-plan living room with light beige carpet and white walls decorated with framed photographs and a round clock. In the foreground stands a black metal rolling cart holding a white plastic laundry basket, with a folded patterned blanket resting on its top shelf. Surrounding it are tan leather sofas and armchairs, a large flat-screen television on a black media console displaying a blue broadcast, and a dark blue exercise ball on the floor. In the background an open kitchen with light wooden cabinets and a dining table with black chairs is visible, all lit by soft, even daylight.",
+ "segments": [
+  {
+   "time_range_s": [
+    0.0,
+    4.416666666666667
+   ],
+   "prompt": "A bright, open-plan living room with light beige carpet and white walls decorated with framed photographs and a round clock. In the foreground stands a black metal rolling cart holding a white plastic laundry basket, with a folded patterned blanket resting on its top shelf. Surrounding it are tan leather sofas and armchairs, a large flat-screen television on a black media console displaying a blue broadcast, and a dark blue exercise ball on the floor. In the background an open kitchen with light wooden cabinets and a dining table with black chairs is visible, all lit by soft, even daylight."
+  },
+  {
+   "time_range_s": [
+    4.416666666666667,
+    7.958333333333333
+   ],
+   "prompt": "A bright, open-plan living room with light beige carpet and white walls decorated with framed photographs and a round clock. In the foreground stands a black metal rolling cart holding a white plastic laundry basket, with a folded patterned blanket resting on its top shelf. Surrounding it are tan leather sofas and armchairs, a large flat-screen television on a black media console displaying a blue broadcast, and a dark blue exercise ball on the floor. In the background an open kitchen with light wooden cabinets and a dining table with black chairs is visible, all lit by soft, even daylight. Canny edge map."
+  }
+ ]
+}

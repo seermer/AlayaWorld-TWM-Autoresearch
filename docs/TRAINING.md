@@ -178,10 +178,10 @@ For `video_caption_static`, training uses an identity pose for every frame. Do n
 camera that pans or shakes even slightly: the model would learn that camera motion happens
 without a pose change. Any `poses/` directory is ignored.
 
-Each format has a small real example dataset and a recipe. The datasets are not in git; they are
-built locally under `data/examples/`, and the recipes in `configs/examples/` point at them.
+Each format has a small real example dataset and a recipe. The datasets are in git under
+`data/examples/`, and the recipes in `configs/examples/` point at them.
 
-| Format | Example recipe | Example data (local) |
+| Format | Example recipe | Example data |
 |---|---|---|
 | `video_caption_camera` | [`configs/examples/finetune_video_caption_camera.yaml`](../configs/examples/finetune_video_caption_camera.yaml) | `data/examples/video_caption_camera`: 6 SpatialVID-HQ clips, 9-15 s each at 24-50 fps, with captions and per-frame poses |
 | `video_timed_prompts_camera` | [`configs/examples/finetune_video_timed_prompts_camera.yaml`](../configs/examples/finetune_video_timed_prompts_camera.yaml) | `data/examples/video_timed_prompts_camera`: 6 DL3DV clips, 5-10 s each, that turn into a canny edge map or from a canny edge map into a depth map where the text changes (6 clips of the overfit test's dataset, section 4) |

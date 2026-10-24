@@ -1,0 +1,19 @@
+{
+ "caption": "This is a bright, empty laboratory or workshop room filled with rows of wooden cabinetry. Light oak-veneer cabinets with white metal handles and drawer pulls line the space, each topped with a dark black countertop, and gray vented equipment boxes, a large cardboard box, and a black monitor sit on the counters while a white paper towel drapes over one edge. In the background a yellow flammable-storage cabinet marked with red lettering stands against a white wall near a metal sink faucet. The floor is pale off-white tile, and the whole room is evenly lit by bright overhead fluorescent ceiling panels.",
+ "segments": [
+  {
+   "time_range_s": [
+    0.0,
+    5.458333333333333
+   ],
+   "prompt": "This is a bright, empty laboratory or workshop room filled with rows of wooden cabinetry. Light oak-veneer cabinets with white metal handles and drawer pulls line the space, each topped with a dark black countertop, and gray vented equipment boxes, a large cardboard box, and a black monitor sit on the counters while a white paper towel drapes over one edge. In the background a yellow flammable-storage cabinet marked with red lettering stands against a white wall near a metal sink faucet. The floor is pale off-white tile, and the whole room is evenly lit by bright overhead fluorescent ceiling panels. Canny edge map."
+  },
+  {
+   "time_range_s": [
+    5.458333333333333,
+    7.916666666666667
+   ],
+   "prompt": "This is a bright, empty laboratory or workshop room filled with rows of wooden cabinetry. Light oak-veneer cabinets with white metal handles and drawer pulls line the space, each topped with a dark black countertop, and gray vented equipment boxes, a large cardboard box, and a black monitor sit on the counters while a white paper towel drapes over one edge. In the background a yellow flammable-storage cabinet marked with red lettering stands against a white wall near a metal sink faucet. The floor is pale off-white tile, and the whole room is evenly lit by bright overhead fluorescent ceiling panels. Depth map."
+  }
+ ]
+}

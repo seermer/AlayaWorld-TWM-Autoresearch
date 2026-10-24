@@ -1,0 +1,19 @@
+{
+ "caption": "A sunny urban park plaza features a tall, conical blue spruce with silvery-blue needles standing at the center of a sandy planting bed, ringed by low rounded green hedges, a tuft of fine ornamental grass, and a small yellow-brown shrub. To the left, a leafy green deciduous tree rises beside a grey stone-paved walkway where a small reddish-brown sign sits on a stone base, while to the right more clipped hedges, a wooden bench, and trees with rust-colored autumn leaves line the path. In the background, tall beige and white residential apartment towers rise above the treeline under a bright blue sky streaked with thin white clouds. The scene is lit by strong midday sunlight that casts crisp shadows across the grey paving stones and the manicured greenery.",
+ "segments": [
+  {
+   "time_range_s": [
+    0.0,
+    2.5833333333333335
+   ],
+   "prompt": "A sunny urban park plaza features a tall, conical blue spruce with silvery-blue needles standing at the center of a sandy planting bed, ringed by low rounded green hedges, a tuft of fine ornamental grass, and a small yellow-brown shrub. To the left, a leafy green deciduous tree rises beside a grey stone-paved walkway where a small reddish-brown sign sits on a stone base, while to the right more clipped hedges, a wooden bench, and trees with rust-colored autumn leaves line the path. In the background, tall beige and white residential apartment towers rise above the treeline under a bright blue sky streaked with thin white clouds. The scene is lit by strong midday sunlight that casts crisp shadows across the grey paving stones and the manicured greenery. Canny edge map."
+  },
+  {
+   "time_range_s": [
+    2.5833333333333335,
+    5.291666666666667
+   ],
+   "prompt": "A sunny urban park plaza features a tall, conical blue spruce with silvery-blue needles standing at the center of a sandy planting bed, ringed by low rounded green hedges, a tuft of fine ornamental grass, and a small yellow-brown shrub. To the left, a leafy green deciduous tree rises beside a grey stone-paved walkway where a small reddish-brown sign sits on a stone base, while to the right more clipped hedges, a wooden bench, and trees with rust-colored autumn leaves line the path. In the background, tall beige and white residential apartment towers rise above the treeline under a bright blue sky streaked with thin white clouds. The scene is lit by strong midday sunlight that casts crisp shadows across the grey paving stones and the manicured greenery. Depth map."
+  }
+ ]
+}

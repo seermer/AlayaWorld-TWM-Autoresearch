@@ -1,0 +1,19 @@
+{
+ "caption": "The scene is an indoor airport baggage claim area dominated by a large, empty baggage carousel made of polished stainless steel slats arranged in a wide curved loop. A blue and red caution sign reading \"For your safety, do not climb or sit on carousel at any time\" is mounted on the metal rim, and a row of metal luggage carts sits against the far wall. The floor is a speckled beige tile, and the walls are a warm tan with a darker wood-toned band running along them. Bright overhead lighting reflects off the gleaming metal surfaces, giving the empty carousel a clean, slightly worn appearance with visible scuffs and scratches.",
+ "segments": [
+  {
+   "time_range_s": [
+    0.0,
+    5.083333333333333
+   ],
+   "prompt": "The scene is an indoor airport baggage claim area dominated by a large, empty baggage carousel made of polished stainless steel slats arranged in a wide curved loop. A blue and red caution sign reading \"For your safety, do not climb or sit on carousel at any time\" is mounted on the metal rim, and a row of metal luggage carts sits against the far wall. The floor is a speckled beige tile, and the walls are a warm tan with a darker wood-toned band running along them. Bright overhead lighting reflects off the gleaming metal surfaces, giving the empty carousel a clean, slightly worn appearance with visible scuffs and scratches."
+  },
+  {
+   "time_range_s": [
+    5.083333333333333,
+    9.0
+   ],
+   "prompt": "The scene is an indoor airport baggage claim area dominated by a large, empty baggage carousel made of polished stainless steel slats arranged in a wide curved loop. A blue and red caution sign reading \"For your safety, do not climb or sit on carousel at any time\" is mounted on the metal rim, and a row of metal luggage carts sits against the far wall. The floor is a speckled beige tile, and the walls are a warm tan with a darker wood-toned band running along them. Bright overhead lighting reflects off the gleaming metal surfaces, giving the empty carousel a clean, slightly worn appearance with visible scuffs and scratches. Canny edge map."
+  }
+ ]
+}
