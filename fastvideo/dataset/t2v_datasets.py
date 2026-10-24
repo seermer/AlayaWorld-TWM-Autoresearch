@@ -920,7 +920,7 @@ class MultiSourceVideoDataset(Dataset):
     def _get_sample_inner(self, video_path, caption_path, pose_path,
                           source_name, video_id, config, sample_index=None):
         try:
-            video_reader = VideoReader(video_path, ctx=cpu(0))
+            video_reader = VideoReader(video_path, ctx=cpu(0), num_threads=2)  # the default starts ~one thread per core: EAGAIN on 8 ranks
         except Exception as e:
             raise RuntimeError(f"Error reading {video_path}: {e}")
         video_length = len(video_reader)
