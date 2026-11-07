@@ -1290,6 +1290,9 @@ class RolloutTrainer:
             sample_idx = global_idx % len(dataset)
             batch = dataset[sample_idx]
             video_pixels, caption, metadata = self._unpack_batch(batch)
+            if _wbench and not _pad_slot:   # every rank: AutoResearcher's bridge reads it as the case's start
+                _case = str(metadata.get("wbench_case_id") or metadata.get("video_id")).replace("case_", "")
+                print(f"[Validation] case_start case={_case} rank={self.dist.rank}", flush=True)
             target_base_start = self.cfg.layout.sink_latent_frames + gap_steps + N + explicit_condition
             if self._uses_vigeo_prefix_last_frame():
                 latent_full = self._build_vigeo_validation_latent_full(
