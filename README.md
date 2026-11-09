@@ -1,5 +1,25 @@
 # AlayaWorld: Long-Horizon and Playable Video World Generation
 
+## AutoResearcher live-11-08 setup
+
+For this experiment, use `live-11-08` in **AutoResearcher, WorldModel and WBench**,
+placed side by side. Follow the [AutoResearcher setup guide](https://github.com/seermer/AR-TWM-Autoresearch/blob/live-11-08/README.md)
+for environments, keys, weights and checks. Then follow the
+[animal + H100 launch guide](docs/LIVE-11-08.md) for a run without Hugging Face or GitHub uploads and with the simple panel.
+
+```bash
+# Fresh clone (run from the parent directory):
+git clone --branch live-11-08 git@github.com:seermer/AlayaWorld-TWM-Autoresearch.git WorldModel
+# Existing clone (run inside WorldModel):
+git fetch origin
+git switch live-11-08
+git branch --show-current     # must print live-11-08
+```
+
+The standalone upstream instructions below are reference material; use the
+AutoResearcher guide for this experiment's setup.
+
+
 <p align="center"><a href="https://alayalab.ai/"><b>Alaya Lab</b></a></p>
 
 <p align="center">
